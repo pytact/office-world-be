@@ -105,10 +105,10 @@ async def seed_superadmin() -> None:
                     print(f"  ✅ UserRoleAssignment already assigned.")
                 else:
                     print(f"  ⚠️  UserRoleAssignment not found. Creating UserRoleAssignment...")
-                    # Get superadmin role
+                    # Get superadmin role (case-insensitive)
                     role_result = await session.execute(
                         select(Role).where(
-                            Role.name == "SuperAdmin",
+                            func.lower(Role.name) == func.lower("superadmin"),
                             Role.deleted_at.is_(None),
                         )
                     )
@@ -140,11 +140,11 @@ async def seed_superadmin() -> None:
                 print(f"Password: {DEFAULT_PASSWORD}")
                 return
 
-            # Get superadmin role
+            # Get superadmin role (case-insensitive)
             print("\nFetching SuperAdmin role...")
             role_result = await session.execute(
                 select(Role).where(
-                    Role.name == "SuperAdmin",
+                    func.lower(Role.name) == func.lower("superadmin"),
                     Role.deleted_at.is_(None),
                 )
             )

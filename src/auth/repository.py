@@ -71,3 +71,19 @@ class AuthRepository:
         await self.session.commit()
         await self.session.refresh(user)
         return user
+
+    async def get_user_with_permissions_context(self, user_id: UUID) -> Optional[User]:
+        """Get user by ID with eager loading of role assignment, role, and company.
+        
+        Used for permission evaluation in GET /api/v1/auth/me endpoint.
+        Loads all relationships needed to compute PermissionSet and AuthContext.
+        """
+        result = await self.session.execute(
+            select(User)
+            .options(
+                selectinload(User.role_assignments).selectinload(UserRoleAssignment.role),
+                selectinload(User.role_assignments).selectinload(UserRoleAssignment.company),
+            )
+            .where(User.id == user_id, User.deleted_at.is_(None))
+        )
+        return result.scalar_one_or_none()

@@ -15,6 +15,9 @@ class Company(Base):
     
     Based on F1_db_spec.md Section 7.2 - Company entity as tenant boundary 
     with unique name and slug.
+    
+    Also used by F2_db_spec.md Section 7.4 - Tenant boundary providing company 
+    context for permission scoping for RBAC & Permission Engine (F-002).
     """
 
     __tablename__ = "companies"

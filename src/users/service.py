@@ -404,9 +404,12 @@ class UserService:
         if not role:
             raise RoleNotFound(invite_data.role_code)
         
+        # Normalize role_code to lowercase for comparisons
+        role_code_lower = invite_data.role_code.lower() if invite_data.role_code else None
+        
         # Determine company_id based on role and inviter context
         company_id = None
-        if invite_data.role_code != ROLE_CODE_SUPERADMIN:
+        if role_code_lower != ROLE_CODE_SUPERADMIN.lower():
             # Non-SuperAdmin roles require a company
             if invite_data.company_slug:
                 company = await self.repository.get_company_by_slug(invite_data.company_slug)
@@ -423,7 +426,7 @@ class UserService:
                     raise CompanyNotFound("")  # Company required for non-SuperAdmin roles
         
         # Check if company already has CEO (for CEO role assignment)
-        if invite_data.role_code == ROLE_CODE_CEO and company_id:
+        if role_code_lower == ROLE_CODE_CEO.lower() and company_id:
             has_ceo = await self.repository.check_company_has_ceo(company_id)
             if has_ceo:
                 company = await self.repository.get_company_by_slug(invite_data.company_slug or "")
@@ -499,16 +502,16 @@ class UserService:
         # Authorization: Check if current user can update this user
         # Get current user's role from active role assignment
         current_user_assignment = await self.repository.get_active_role_assignment(current_user.id)
-        current_user_role = current_user_assignment.role.code if current_user_assignment and current_user_assignment.role else None
+        current_user_role = current_user_assignment.role.code.lower() if current_user_assignment and current_user_assignment.role else None
         
         # Users can always update their own details
         can_update = current_user.id == user_id
         
         # SuperAdmin can update any user
-        if current_user_role == ROLE_CODE_SUPERADMIN:
+        if current_user_role == ROLE_CODE_SUPERADMIN.lower():
             can_update = True
         # CEO and HR can update users in their own company
-        elif current_user_role in [ROLE_CODE_CEO, ROLE_CODE_HR]:
+        elif current_user_role in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
             # Get target user's company
             target_user_assignment = await self.repository.get_active_role_assignment(user_id)
             target_user_company_id = target_user_assignment.company_id if target_user_assignment else None
@@ -676,8 +679,11 @@ class UserService:
         if not role:
             raise RoleNotFound(role_change_data.role_code)
 
+        # Normalize role_code to lowercase for comparisons
+        role_code_lower = role_change_data.role_code.lower() if role_change_data.role_code else None
+
         # CEO Cardinality Rule: Check if assigning CEO role
-        if role_change_data.role_code == ROLE_CODE_CEO:
+        if role_code_lower == ROLE_CODE_CEO.lower():
             # Check if company already has an active CEO
             has_ceo = await self.repository.check_company_has_ceo(active_assignment.company_id)
             if has_ceo:
@@ -783,6 +789,9 @@ class UserService:
             # Keep current role (role_code not provided)
             new_role_code = current_role.code
 
+        # Normalize role_code to lowercase for comparisons
+        new_role_code_lower = new_role_code.lower() if new_role_code else None
+
         # Validate role if provided
         if new_role_code:
             role = await self.repository.get_role_by_code(new_role_code)
@@ -792,7 +801,7 @@ class UserService:
         # CEO Cardinality Rule: Check if assigning CEO role OR user has CEO role
         # Case 1: role_code is provided and it's CEO
         # Case 2: role_code is NOT provided and user's current role is CEO
-        if new_role_code == ROLE_CODE_CEO:
+        if new_role_code_lower == ROLE_CODE_CEO.lower():
             # Check if target company already has an active CEO
             has_ceo = await self.repository.check_company_has_ceo(company_id)
             if has_ceo:

@@ -139,7 +139,7 @@ class UserRepository:
 
         if role_code:
             query = query.join(Role, UserRoleAssignment.role_id == Role.id).where(
-                Role.code == role_code,
+                func.lower(Role.code) == func.lower(role_code),
                 Role.deleted_at.is_(None),
             )
 
@@ -232,7 +232,7 @@ class UserRepository:
 
         if role_code:
             query = query.join(Role, UserRoleAssignment.role_id == Role.id).where(
-                Role.code == role_code,
+                func.lower(Role.code) == func.lower(role_code),
                 Role.deleted_at.is_(None),
             )
 
@@ -331,11 +331,11 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def get_role_by_code(self, code: str) -> Optional[Role]:
-        """Get role by code."""
+        """Get role by code (case-insensitive)."""
         result = await self.session.execute(
             select(Role)
             .where(
-                Role.code == code,
+                func.lower(Role.code) == func.lower(code),
                 Role.deleted_at.is_(None),
             )
         )
@@ -352,7 +352,7 @@ class UserRepository:
             .join(Role, UserRoleAssignment.role_id == Role.id)
             .where(
                 UserRoleAssignment.company_id == company_id,
-                Role.code == "ceo",
+                func.lower(Role.code) == func.lower("ceo"),
                 UserRoleAssignment.is_active.is_(True),
                 UserRoleAssignment.deleted_at.is_(None),
                 Role.deleted_at.is_(None),
@@ -384,7 +384,7 @@ class UserRepository:
             )
             .join(Role, UserRoleAssignment.role_id == Role.id)
             .where(
-                Role.code == "ceo",
+                func.lower(Role.code) == func.lower("ceo"),
                 Role.deleted_at.is_(None),
                 User.deleted_at.is_(None),
             )

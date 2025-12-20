@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         PasswordResetRequestResponse,
         PasswordResetRequest,
         PasswordResetResponse,
+        UserPermissionsResponse,
     )
 
 # OAuth2 scheme for Swagger UI
@@ -107,3 +108,7 @@ class AuthApiDep:
     async def reset_password(self, token: UUID, request: "PasswordResetRequest") -> "PasswordResetResponse":
         """Reset user password."""
         return await self.service.reset_password(token, request)
+
+    async def get_user_permissions(self, user_id: UUID) -> "UserPermissionsResponse":
+        """Get user permissions and context."""
+        return await self.service.get_user_permissions(user_id)

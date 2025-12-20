@@ -121,12 +121,15 @@ async def list_company_users(
     
     user, company_id = user_company
     
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+    
     # Employee cannot access user lists
-    if role == ROLE_CODE_EMPLOYEE:
+    if role_lower == ROLE_CODE_EMPLOYEE.lower():
         raise InsufficientPermissions("view user lists")
     
     # Determine field visibility based on role
-    include_sensitive = role != ROLE_CODE_MANAGER
+    include_sensitive = role_lower != ROLE_CODE_MANAGER.lower()
     
     result = await api.list_company_users(company_id, query, include_sensitive=include_sensitive)
     return StandardResponse(
@@ -179,12 +182,15 @@ async def get_user_detail(
     
     user, company_id = user_company
     
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+    
     # Employee cannot access user detail
-    if role == ROLE_CODE_EMPLOYEE:
+    if role_lower == ROLE_CODE_EMPLOYEE.lower():
         raise InsufficientPermissions("view user details")
     
     # Determine field visibility based on role
-    include_sensitive = role != ROLE_CODE_MANAGER
+    include_sensitive = role_lower != ROLE_CODE_MANAGER.lower()
     
     result = await api.get_user_by_id(user_id, include_sensitive=include_sensitive, if_none_match=if_none_match)
     
@@ -275,8 +281,11 @@ async def invite_user(
     
     user, company_id = user_company
     
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+    
     # Manager and Employee cannot invite users
-    if role in [ROLE_CODE_MANAGER, ROLE_CODE_EMPLOYEE]:
+    if role_lower in [ROLE_CODE_MANAGER.lower(), ROLE_CODE_EMPLOYEE.lower()]:
         raise InsufficientPermissions("invite users")
     
     result = await api.invite_user(invite_data, user.id, company_id)
@@ -356,8 +365,11 @@ async def list_roles(
     - Manager, Employee: Access denied (403)
     """
     # X-Request-ID is handled by middleware
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+    
     # Manager and Employee cannot access roles
-    if role in [ROLE_CODE_MANAGER, ROLE_CODE_EMPLOYEE]:
+    if role_lower in [ROLE_CODE_MANAGER.lower(), ROLE_CODE_EMPLOYEE.lower()]:
         raise InsufficientPermissions("view roles")
     
     result = await api.list_roles()
@@ -432,13 +444,16 @@ async def change_user_role(
 
     current_user, company_id = user_company
 
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+
     # Authorization: Only SuperAdmin, CEO, HR can change roles
-    if role not in [ROLE_CODE_SUPERADMIN, ROLE_CODE_CEO, ROLE_CODE_HR]:
+    if role_lower not in [ROLE_CODE_SUPERADMIN.lower(), ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
         raise InsufficientPermissions("change user roles")
 
     # CEO and HR can only change roles within their own company
     # (SuperAdmin can change roles across any company, so company_id check is skipped for SuperAdmin)
-    if role in [ROLE_CODE_CEO, ROLE_CODE_HR] and company_id is None:
+    if role_lower in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()] and company_id is None:
         raise InsufficientPermissions("change user roles outside your company")
 
     result = await api.change_user_role(user_id, role_change_data, current_user.id, changer_company_id=company_id, if_match=if_match)
@@ -530,13 +545,16 @@ async def deactivate_user(
 
     current_user, company_id = user_company
 
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+
     # Authorization: Only SuperAdmin, CEO, HR can deactivate users
-    if role not in [ROLE_CODE_SUPERADMIN, ROLE_CODE_CEO, ROLE_CODE_HR]:
+    if role_lower not in [ROLE_CODE_SUPERADMIN.lower(), ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
         raise InsufficientPermissions("deactivate users")
 
     # CEO and HR can only deactivate users in their own company
     # (SuperAdmin can deactivate users across any company, so company_id check is skipped for SuperAdmin)
-    if role in [ROLE_CODE_CEO, ROLE_CODE_HR] and company_id is None:
+    if role_lower in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()] and company_id is None:
         raise InsufficientPermissions("deactivate users outside your company")
 
     result = await api.deactivate_user(user_id, current_user.id, deactivator_company_id=company_id, if_match=if_match)
@@ -585,13 +603,16 @@ async def reactivate_user(
 
     current_user, company_id = user_company
 
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+
     # Authorization: Only SuperAdmin, CEO, HR can reactivate users
-    if role not in [ROLE_CODE_SUPERADMIN, ROLE_CODE_CEO, ROLE_CODE_HR]:
+    if role_lower not in [ROLE_CODE_SUPERADMIN.lower(), ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
         raise InsufficientPermissions("reactivate users")
 
     # CEO and HR can only reactivate users in their own company
     # (SuperAdmin can reactivate users across any company, so company_id check is skipped for SuperAdmin)
-    if role in [ROLE_CODE_CEO, ROLE_CODE_HR] and company_id is None:
+    if role_lower in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()] and company_id is None:
         raise InsufficientPermissions("reactivate users outside your company")
 
     result = await api.reactivate_user(user_id, current_user.id, reactivator_company_id=company_id, if_match=if_match)
@@ -641,13 +662,16 @@ async def resend_invitation(
 
     current_user, company_id = user_company
 
+    # Normalize role to lowercase for comparisons
+    role_lower = role.lower() if role else None
+
     # Authorization: Only SuperAdmin, CEO, HR can resend invitations
-    if role not in [ROLE_CODE_SUPERADMIN, ROLE_CODE_CEO, ROLE_CODE_HR]:
+    if role_lower not in [ROLE_CODE_SUPERADMIN.lower(), ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
         raise InsufficientPermissions("resend invitations")
 
     # CEO and HR can only resend invitations to users in their own company
     # (SuperAdmin can resend invitations to users across any company, so company_id check is skipped for SuperAdmin)
-    if role in [ROLE_CODE_CEO, ROLE_CODE_HR] and company_id is None:
+    if role_lower in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()] and company_id is None:
         raise InsufficientPermissions("resend invitations outside your company")
 
     result = await api.resend_invitation(user_id, current_user.id, resender_company_id=company_id)

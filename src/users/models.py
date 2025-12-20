@@ -20,6 +20,9 @@ class User(Base):
     
     Based on F1_db_spec.md Section 7.1 - User entity with invitation-based 
     onboarding lifecycle, activation status, and credential management.
+    
+    Also used by F2_db_spec.md Section 7.2 - Platform user identity with 
+    activation status affecting permission evaluation for RBAC & Permission Engine (F-002).
     """
 
     __tablename__ = "users"

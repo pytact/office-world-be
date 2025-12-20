@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Form, status, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from src.schemas import StandardResponse
-from src.auth.dependencies import AuthApiDep, oauth2_scheme
+from src.auth.dependencies import AuthApiDep, oauth2_scheme, get_current_user
 from src.auth.schemas import (
     LoginRequest,
     LoginResponse,
@@ -15,8 +15,10 @@ from src.auth.schemas import (
     PasswordResetRequestResponse,
     PasswordResetRequest,
     PasswordResetResponse,
+    UserPermissionsResponse,
 )
 from src.auth.exceptions import InvalidCredentials, AccountInactive
+from src.users.models import User
 from src.auth.documentations.auth_api_doc import AuthApiDocs
 
 router = APIRouter(
@@ -182,4 +184,30 @@ async def reset_password(
     return StandardResponse(
         data=result,
         message="Password reset successfully",
+    )
+
+
+# Get User Permissions Endpoint
+@router.get(
+    "/me",
+    response_model=StandardResponse[UserPermissionsResponse],
+    status_code=status.HTTP_200_OK,
+    summary=AuthApiDocs.get_me["summary"],
+    description=AuthApiDocs.get_me["description"],
+)
+async def get_user_permissions(
+    current_user: User = Depends(get_current_user),
+    api: AuthApiDep = Depends(),
+) -> StandardResponse[UserPermissionsResponse]:
+    """Retrieve current user's details, permissions and context.
+    
+    Returns the authenticated user's user details (at the top), PermissionSet 
+    (resource-action mappings), and AuthContext (role, company, status flags) 
+    in a single response. User details include user_id, email, first_name, 
+    last_name, is_active, created_at, and updated_at.
+    """
+    result = await api.get_user_permissions(current_user.id)
+    return StandardResponse(
+        data=result,
+        message="User permissions and context retrieved successfully",
     )

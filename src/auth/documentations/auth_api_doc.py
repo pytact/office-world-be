@@ -35,3 +35,8 @@ class AuthApiDocs:
         "summary": "Reset user password",
         "description": "Resets user password using valid reset token and new password. Validates token, checks expiry, verifies token is not already used, and validates password complexity requirements.",
     }
+
+    get_me: ClassVar[dict] = {
+        "summary": "Retrieve current user's details, permissions and context",
+        "description": "Returns the authenticated user's user details (at the top), PermissionSet (resource-action mappings), and AuthContext (role, company, status flags) in a single response. User details include user_id, email, first_name, last_name, is_active, created_at, and updated_at. This endpoint provides all authorization data needed by the frontend for UI gating and permission checks. Permission data is cached per user and automatically recomputed after cache invalidation triggered by role changes, user activation/deactivation, or company reassignment.",
+    }

@@ -93,7 +93,7 @@ class UserInfo(BaseModel):
     first_name: str
     last_name: str
     role: str
-    org_id: Optional[UUID] = None
+    company_id: Optional[UUID] = None
     company_slug: Optional[str] = None
     company_is_active: Optional[bool] = None
     is_super_admin: bool
@@ -128,7 +128,7 @@ class ActivationResponse(BaseModel):
     first_name: str
     last_name: str
     role: str
-    org_id: Optional[UUID] = None
+    company_id: Optional[UUID] = None
     activated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -147,3 +147,63 @@ class PasswordResetResponse(BaseModel):
     email: str
     password_reset: bool = True
     reset_at: datetime
+
+
+# Permission & Context Schemas for GET /api/v1/auth/me
+
+class UserDetails(BaseModel):
+    """User details information in permissions response."""
+
+    user_id: UUID = Field(..., description="Unique user identifier")
+    email: str = Field(..., description="User email address")
+    first_name: Optional[str] = Field(None, description="User first name")
+    last_name: Optional[str] = Field(None, description="User last name")
+    is_active: bool = Field(..., description="Login eligibility")
+    created_at: datetime = Field(..., description="Account creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoleInfo(BaseModel):
+    """Role information in permissions response."""
+
+    code: str = Field(..., description="Role code identifier", examples=["ceo", "hr", "manager", "employee", "superadmin"])
+    name: str = Field(..., description="Role display name", examples=["CEO", "HR", "Manager", "Employee", "SuperAdmin"])
+
+
+class CompanyInfo(BaseModel):
+    """Company information in permissions response."""
+
+    slug: str = Field(..., description="Company slug identifier")
+
+
+class AuthContext(BaseModel):
+    """Authentication context for permission evaluation.
+    
+    Represents contextual information about the authenticated user used to 
+    qualify permission evaluation. Based on F2_api_spec.md Section 4.1.
+    """
+
+    role: RoleInfo = Field(..., description="User role information")
+    company_id: Optional[UUID] = Field(None, description="Company identifier (null for SuperAdmin)")
+    company: Optional[CompanyInfo] = Field(None, description="Company information (null for SuperAdmin)")
+    is_super_admin: bool = Field(..., description="Whether user is SuperAdmin")
+    is_company_active: Optional[bool] = Field(None, description="Whether user's company is active (null for SuperAdmin)")
+
+
+class UserPermissionsResponse(BaseModel):
+    """Response schema for GET /api/v1/auth/me endpoint.
+    
+    Returns the authenticated user's user details, PermissionSet (resource-action mappings) 
+    and AuthContext (role, company, status flags) in a single response.
+    User details are at the top, followed by permissions, then context.
+    """
+
+    user: UserDetails = Field(..., description="User details")
+    permissions: dict[str, list[str]] = Field(
+        ...,
+        description="Resource-action permission mapping",
+        examples=[{"tasks": ["create", "read", "update", "delete"], "salary": ["read"]}],
+    )
+    context: AuthContext = Field(..., description="User authentication context")

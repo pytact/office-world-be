@@ -15,6 +15,7 @@ from src.auth.schemas import (
     PasswordResetRequestResponse,
     PasswordResetRequest,
     PasswordResetResponse,
+    UserPermissionsResponse,
 )
 from src.auth.exceptions import (
     InvalidCredentials,
@@ -94,7 +95,7 @@ class AuthService:
         token_data = {
             "sub": str(user.id),
             "role": role_code or "employee",
-            "org_id": str(role_assignment.company_id) if role_assignment.company_id else None,
+            "company_id": str(role_assignment.company_id) if role_assignment.company_id else None,
         }
         access_token = create_access_token(token_data)
 
@@ -105,7 +106,7 @@ class AuthService:
             first_name=user.first_name,
             last_name=user.last_name,
             role=role_code or "employee",
-            org_id=role_assignment.company_id,
+            company_id=role_assignment.company_id,
             company_slug=role_assignment.company.slug if role_assignment.company else None,
             company_is_active=role_assignment.company.is_active if role_assignment.company else None,
             is_super_admin=role_assignment.company_id is None,
@@ -195,7 +196,7 @@ class AuthService:
 
         await self.repository.update_user(user)
 
-        # Get role assignment for org_id
+        # Get role assignment for company_id
         role_assignment = await self.repository.get_active_role_assignment(user.id)
         role_code = role_assignment.role.code if role_assignment and role_assignment.role else "employee"
 
@@ -205,7 +206,7 @@ class AuthService:
             first_name=user.first_name,
             last_name=user.last_name,
             role=role_code,
-            org_id=role_assignment.company_id if role_assignment else None,
+            company_id=role_assignment.company_id if role_assignment else None,
             activated_at=user.activate_at,
         )
 
@@ -285,3 +286,93 @@ class AuthService:
         if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
             return "Password must contain at least one special character"
         return None
+
+    async def get_user_permissions(self, user_id: UUID) -> "UserPermissionsResponse":
+        """Get user permissions and context for GET /api/v1/auth/me endpoint.
+        
+        Returns user details, PermissionSet and AuthContext after evaluating:
+        - Role permissions (with inheritance resolved at seed time)
+        - Company scoping (for non-SuperAdmin users)
+        - User activation status (deactivated users get empty permissions)
+        - Company activation status (inactive companies result in empty permissions)
+        
+        Based on F2_api_spec.md Section 4.3.1.
+        """
+        from src.auth.schemas import (
+            UserPermissionsResponse,
+            UserDetails,
+            AuthContext,
+            RoleInfo,
+            CompanyInfo,
+        )
+        
+        # Get user with all relationships loaded
+        user = await self.repository.get_user_with_permissions_context(user_id)
+        if not user:
+            raise InvalidCredentials()
+        
+        # Get active role assignment
+        role_assignment = await self.repository.get_active_role_assignment(user_id)
+        if not role_assignment:
+            raise InvalidCredentials()
+        
+        # Determine if SuperAdmin (company_id is None)
+        is_super_admin = role_assignment.company_id is None
+        
+        # Check user activation status
+        is_user_active = user.is_active
+        
+        # Check company activation status (null for SuperAdmin)
+        is_company_active: bool | None = None
+        if not is_super_admin and role_assignment.company:
+            is_company_active = role_assignment.company.is_active
+        
+        # Build UserDetails
+        user_details = UserDetails(
+            user_id=user.id,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
+        
+        # Build AuthContext
+        role_info = RoleInfo(
+            code=role_assignment.role.code if role_assignment.role else "employee",
+            name=role_assignment.role.name if role_assignment.role else "Employee",
+        )
+        
+        company_info: CompanyInfo | None = None
+        company_id: UUID | None = None
+        if not is_super_admin and role_assignment.company:
+            company_id = role_assignment.company_id
+            company_info = CompanyInfo(slug=role_assignment.company.slug)
+        
+        context = AuthContext(
+            role=role_info,
+            company_id=company_id,
+            company=company_info,
+            is_super_admin=is_super_admin,
+            is_company_active=is_company_active,
+        )
+        
+        # Compute PermissionSet
+        permissions: dict[str, list[str]] = {}
+        
+        # If user is deactivated, return empty permissions
+        if not is_user_active:
+            return UserPermissionsResponse(user=user_details, permissions=permissions, context=context)
+        
+        # If company is inactive (for company-scoped users), return empty permissions
+        if not is_super_admin and is_company_active is False:
+            return UserPermissionsResponse(user=user_details, permissions=permissions, context=context)
+        
+        # Get permissions from role (inheritance already resolved at seed time)
+        if role_assignment.role and role_assignment.role.permissions:
+            # Permissions are stored as JSONB: {"resource": ["action1", "action2"], ...}
+            # Role inheritance is resolved at seed time, so permissions already include inherited permissions
+            permissions = role_assignment.role.permissions.copy()
+        
+        return UserPermissionsResponse(user=user_details, permissions=permissions, context=context)

@@ -25,7 +25,7 @@ async def get_current_user_with_token(
 ) -> tuple[User, dict]:
     """Get current authenticated user and token payload.
     
-    Returns tuple of (User, token_payload) for role and org_id extraction.
+    Returns tuple of (User, token_payload) for role and company_id extraction.
     Also checks if token is blacklisted (logged out).
     """
     from src.auth.utils import is_token_blacklisted
@@ -69,17 +69,17 @@ async def get_current_superadmin(
     """Get current authenticated user and verify SuperAdmin role.
     
     Based on F1A_api_spec.md Section 3.1 - SuperAdmin role definition.
-    SuperAdmin has role="superadmin" (case-insensitive) and org_id=null in token.
+    SuperAdmin has role="superadmin" (case-insensitive) and company_id=null in token.
     """
     from src.users.constants import ROLE_CODE_SUPERADMIN
     
     user, payload = user_token
     
     role = payload.get("role")
-    org_id = payload.get("org_id")
+    company_id = payload.get("company_id")
     
     # Case-insensitive comparison to handle "SuperAdmin" vs "superadmin"
-    if role is None or role.lower() != ROLE_CODE_SUPERADMIN.lower() or org_id is not None:
+    if role is None or role.lower() != ROLE_CODE_SUPERADMIN.lower() or company_id is not None:
         raise InsufficientPermissions("access platform-wide user list")
     
     return user
@@ -91,15 +91,15 @@ async def get_current_company_user(
     """Get current authenticated user and company_id from token.
     
     Returns tuple of (User, company_id) where company_id is:
-    - None for SuperAdmin (org_id is null)
-    - UUID for company-scoped users (org_id from token)
+    - None for SuperAdmin (company_id is null)
+    - UUID for company-scoped users (company_id from token)
     
     Based on F1A_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
     user, payload = user_token
     
-    org_id = payload.get("org_id")
-    company_id = UUID(org_id) if org_id else None
+    company_id_str = payload.get("company_id")
+    company_id = UUID(company_id_str) if company_id_str else None
     
     return user, company_id
 

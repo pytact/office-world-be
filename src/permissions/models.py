@@ -14,8 +14,11 @@ if TYPE_CHECKING:
 class Role(Base):
     """Role model for permission containers.
     
-    Based on F1_db_spec.md Section 7.3 - Role entity with fixed, predefined role 
-    with immutable code and JSON permissions.
+    Based on F2_db_spec.md Section 7.1 - Role entity with fixed, predefined role 
+    with immutable code and JSONB permissions for RBAC & Permission Engine (F-002).
+    
+    Stores predefined roles with permission definitions as JSONB.
+    Permissions follow resource-action structure: {"resource": ["action1", "action2"]}
     """
 
     __tablename__ = "roles"
@@ -87,12 +90,23 @@ class Role(Base):
         cascade="all, delete-orphan",
     )
 
+    # Table Constraints
+    __table_args__ = (
+        CheckConstraint(
+            "code IN ('superadmin', 'ceo', 'hr', 'manager', 'employee')",
+            name="chk_roles_code"
+        ),
+    )
+
 
 class UserRoleAssignment(Base):
     """User Role Assignment model linking users to roles within company contexts.
     
     Based on F1_db_spec.md Section 7.4 - Active association linking user, role, 
     and company. Enforces one active assignment per user.
+    
+    Also used by F2_db_spec.md Section 7.3 - Links users to roles within company 
+    contexts, providing permission evaluation context for RBAC & Permission Engine (F-002).
     """
 
     __tablename__ = "user_role_assignments"
@@ -120,7 +134,7 @@ class UserRoleAssignment(Base):
     )
     company_id: Mapped[UUID | None] = mapped_column(
         PostgresUUID(as_uuid=True),
-        ForeignKey("companies.id", ondelete="RESTRICT", onupdate="CASCADE"),
+        ForeignKey("companies.id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=True,
         index=True,
     )
