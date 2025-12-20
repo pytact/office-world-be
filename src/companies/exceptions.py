@@ -6,6 +6,7 @@ Based on F1A_api_spec.md - All error responses and exception types.
 from src.exceptions import (
     NotFoundError,
     BadRequestError,
+    ConflictError,
     ValidationError,
     PreconditionRequiredError,
     PreconditionFailedError,
@@ -62,33 +63,39 @@ class ValidationFailed(BadRequestError):
         )
 
 
-class DuplicateCompanyName(BadRequestError):
-    """Duplicate company name exception."""
+class DuplicateCompanyName(ConflictError):
+    """Duplicate company name exception.
+    
+    Based on F4_api_spec.md - 409 Conflict for duplicate resources.
+    """
 
     def __init__(self, company_name: str):
         super().__init__(
-            message=f"Company name '{company_name}' already exists",
+            message="Company name must be unique.",
             error_code=ERROR_CODE_DUPLICATE_COMPANY_NAME,
             details=[
                 {
                     "field": "name",
-                    "issue": f"Company name '{company_name}' already exists",
+                    "issue": "A company with this name already exists.",
                 }
             ],
         )
 
 
-class DuplicateCompanySlug(BadRequestError):
-    """Duplicate company slug exception."""
+class DuplicateCompanySlug(ConflictError):
+    """Duplicate company slug exception.
+    
+    Based on F4_api_spec.md - 409 Conflict for duplicate resources.
+    """
 
     def __init__(self, company_slug: str):
         super().__init__(
-            message=f"Company slug '{company_slug}' already exists",
+            message="Company slug must be unique.",
             error_code=ERROR_CODE_DUPLICATE_COMPANY_SLUG,
             details=[
                 {
                     "field": "slug",
-                    "issue": f"Company slug '{company_slug}' already exists",
+                    "issue": "A company with this slug already exists.",
                 }
             ],
         )
@@ -154,17 +161,22 @@ class PreconditionFailed(PreconditionFailedError):
         )
 
 
-class CannotDeleteCompanyInUse(BadRequestError):
-    """Cannot delete company that is in use exception."""
+class BusinessRuleFailed(ValidationError):
+    """Business rule violation exception.
+    
+    Based on F4_api_spec.md - 422 Unprocessable Entity for business rule violations.
+    Used when company profile updates are blocked (e.g., company inactive).
+    """
 
-    def __init__(self, company_name: str):
+    def __init__(self, message: str):
+        from src.companies.constants import ERROR_CODE_BUSINESS_RULE_FAILED
         super().__init__(
-            message=f"Cannot delete company '{company_name}' because it has active users",
-            error_code=ERROR_CODE_CANNOT_DELETE_COMPANY_IN_USE,
+            message=message,
+            error_code=ERROR_CODE_BUSINESS_RULE_FAILED,
             details=[
                 {
-                    "field": "company_id",
-                    "issue": f"Cannot delete company '{company_name}' because it has active users",
+                    "field": "company",
+                    "issue": message,
                 }
             ],
         )

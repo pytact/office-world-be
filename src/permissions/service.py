@@ -12,22 +12,15 @@ from src.permissions.models import Role
 from src.permissions.repository import RoleRepository
 from src.permissions.schemas import (
     RoleListQuery,
-    RoleCreate,
-    RoleUpdate,
     RoleRead,
     RoleListItem,
 )
 from src.permissions.exceptions import (
     RoleNotFound,
-    InvalidRoleCode,
-    DuplicateRoleCode,
-    DuplicateRoleName,
     InvalidSortField,
     InvalidSortOrder,
-    CannotDeleteRoleInUse,
 )
 from src.permissions.constants import (
-    VALID_ROLE_CODES,
     VALID_SORT_FIELDS,
     VALID_SORT_ORDERS,
 )
@@ -41,11 +34,6 @@ class RoleService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = RoleRepository(session)
-
-    def _validate_role_code(self, role_code: str) -> None:
-        """Validate role code."""
-        if role_code not in VALID_ROLE_CODES:
-            raise InvalidRoleCode(role_code, VALID_ROLE_CODES)
 
     def _validate_sort_field(self, sort_by: str) -> None:
         """Validate sort field."""
@@ -134,65 +122,3 @@ class RoleService:
             raise RoleNotFound(str(role_id))
 
         return RoleRead.model_validate(role)
-
-    async def create_role(self, data: RoleCreate, created_by: Optional[UUID] = None) -> RoleRead:
-        """Create a new role."""
-        # Validate role code
-        self._validate_role_code(data.code)
-
-        # Check for duplicate code
-        if await self.repository.check_code_exists(data.code):
-            raise DuplicateRoleCode(data.code)
-
-        # Check for duplicate name
-        if await self.repository.check_name_exists(data.name):
-            raise DuplicateRoleName(data.name)
-
-        # Create role
-        role = await self.repository.create(
-            name=data.name,
-            code=data.code,
-            permissions=data.permissions,
-            created_by=created_by,
-        )
-
-        return RoleRead.model_validate(role)
-
-    async def update_role(
-        self, role_id: UUID, data: RoleUpdate, updated_by: Optional[UUID] = None
-    ) -> RoleRead:
-        """Update a role."""
-        role = await self.repository.get_by_id(role_id)
-        if not role:
-            raise RoleNotFound(str(role_id))
-
-        # Check for duplicate name if name is being updated
-        if data.name is not None and data.name != role.name:
-            if await self.repository.check_name_exists(data.name, exclude_id=role_id):
-                raise DuplicateRoleName(data.name)
-
-        # Update role
-        updated_role = await self.repository.update(
-            role_id=role_id,
-            name=data.name,
-            permissions=data.permissions,
-            updated_by=updated_by,
-        )
-
-        if not updated_role:
-            raise RoleNotFound(str(role_id))
-
-        return RoleRead.model_validate(updated_role)
-
-    async def delete_role(self, role_id: UUID, deleted_by: Optional[UUID] = None) -> None:
-        """Soft delete a role."""
-        role = await self.repository.get_by_id(role_id)
-        if not role:
-            raise RoleNotFound(str(role_id))
-
-        # Check if role is in use
-        if await self.repository.check_role_in_use(role_id):
-            raise CannotDeleteRoleInUse(role.code)
-
-        # Soft delete role
-        await self.repository.soft_delete(role_id, deleted_by=deleted_by)

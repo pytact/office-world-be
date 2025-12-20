@@ -1,0 +1,82 @@
+================================================================================
+                    ENTITY RELATIONSHIP DIAGRAM (ERD)
+              F-004 — Platform Company Management Feature
+================================================================================
+
++----------------------+             +--------------------------+             +----------------------+
+|      Company          |   1    M    |   UserRoleAssignment     |   M    1    |        User          |
++----------------------+             +--------------------------+             +----------------------+
+| id (PK)               |<----------->| id (PK)                  |<----------->| id (PK)              |
++----------------------+             | company_id (FK)          |             +----------------------+
+                                     | user_id (FK)             |
+                                     +--------------------------+
+
+
++----------------------+             +--------------------------+
+|      Company          |   1    M    |       Employee           |
++----------------------+             +--------------------------+
+| id (PK)               |<----------->| id (PK)                  |
++----------------------+             | company_id (FK)          |
+                                     | user_id (FK)             |
+                                     +--------------------------+
+
+
++----------------------+             +--------------------------+
+|      Company          |   1    M    |        Leaves            |
++----------------------+             +--------------------------+
+| id (PK)               |<----------->| id (PK)                  |
++----------------------+             | company_id (FK)          |
+                                     +--------------------------+
+
+
++----------------------+             +--------------------------+
+|      Company          |   1    M    |        Tasks             |
++----------------------+             +--------------------------+
+| id (PK)               |<----------->| id (PK)                  |
++----------------------+             | company_id (FK)          |
+                                     +--------------------------+
+
+
++----------------------+             +--------------------------+
+|      Company          |   1    M    |     Notifications        |
++----------------------+             +--------------------------+
+| id (PK)               |<----------->| id (PK)                  |
++----------------------+             | company_id (FK)          |
+                                     +--------------------------+
+
+
+================================================================================
+RELATIONSHIP CARDINALITY:
+================================================================================
+
+1. Company 1..* UserRoleAssignment
+   - Each company has many user role assignments
+   - Company owns users through UserRoleAssignment
+
+2. Company 1..* Employee
+   - Each company has many employees
+   - Employees must belong to a company (required)
+
+3. Company 1..* Leaves
+   - Each company has many leave records
+   - Company-scoped domain record
+
+4. Company 1..* Tasks
+   - Each company has many tasks
+   - Company-scoped domain record
+
+5. Company 1..* Notifications
+   - Each company has many notifications
+   - Company-scoped domain record
+
+================================================================================
+NOTES:
+- Company is the tenant organization and data isolation boundary
+- Company owns all company-scoped records (leaves, tasks, salaries, notifications, etc.)
+- Company owns Users via UserRoleAssignment
+- Company owns Employees directly
+- Only Primary Key (id) and Foreign Key fields are shown
+- Business fields and audit fields are excluded per ERD rules
+- Domain records (leaves, tasks, notifications) represent all company-scoped entities
+================================================================================
+

@@ -8,16 +8,23 @@ from src.database import Base
 
 if TYPE_CHECKING:
     from src.permissions.models import UserRoleAssignment
+    from src.employees.models import Employee
 
 
 class Company(Base):
     """Company model for tenant organizations.
     
-    Based on F1_db_spec.md Section 7.2 - Company entity as tenant boundary 
-    with unique name and slug.
+    Based on F4_db_spec.md Section 7.1 - Platform Company Management (F-004).
     
-    Also used by F2_db_spec.md Section 7.4 - Tenant boundary providing company 
-    context for permission scoping for RBAC & Permission Engine (F-002).
+    Company is a first-class aggregate that defines tenant boundaries, access 
+    control scope, and ownership of all company-scoped data. Supports hard 
+    deletion (no soft delete fields).
+    
+    Field Categories:
+    - Immutable Fields: name, slug (cannot be changed after creation)
+    - Governance Fields: is_active (SuperAdmin-only)
+    - Profile Fields: description, address, city, state, country, postal_code, 
+      website, logo_url (editable by CEO/HR when company is active)
     """
 
     __tablename__ = "companies"
@@ -30,7 +37,7 @@ class Company(Base):
         index=True,
     )
 
-    # Company Identity Fields
+    # Company Identity Fields (Immutable)
     name: Mapped[str] = mapped_column(
         String(255),
         unique=True,
@@ -38,17 +45,56 @@ class Company(Base):
         index=True,
     )
     slug: Mapped[str] = mapped_column(
-        String(255),
+        String(100),
         unique=True,
         nullable=False,
         index=True,
     )
 
-    # Status Fields
+    # Profile Fields (Editable by CEO/HR when company is active)
+    description: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+    address: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    city: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    state: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    country: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    postal_code: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+    website: Mapped[str | None] = mapped_column(
+        String(2048),
+        nullable=True,
+    )
+    logo_url: Mapped[str | None] = mapped_column(
+        String(2048),
+        nullable=True,
+    )
+
+    # Governance Fields (SuperAdmin-only)
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         server_default="true",
+    )
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
     )
 
     # Audit Fields
@@ -63,10 +109,6 @@ class Company(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
     created_by: Mapped[UUID | None] = mapped_column(
         PostgresUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT", onupdate="CASCADE"),
@@ -74,12 +116,6 @@ class Company(Base):
         index=True,
     )
     updated_by: Mapped[UUID | None] = mapped_column(
-        PostgresUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT", onupdate="CASCADE"),
-        nullable=True,
-        index=True,
-    )
-    deleted_by: Mapped[UUID | None] = mapped_column(
         PostgresUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT", onupdate="CASCADE"),
         nullable=True,

@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database import get_session
-from src.auth.dependencies import get_current_user, oauth2_scheme
+from src.auth.dependencies import oauth2_scheme
 from src.auth.utils import decode_token
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
@@ -87,15 +87,3 @@ class RoleApiDep:
     async def get_role_by_id(self, role_id: UUID):
         """Get role by ID."""
         return await self.service.get_role_by_id(role_id)
-
-    async def create_role(self, data, created_by: Optional[UUID] = None):
-        """Create a new role."""
-        return await self.service.create_role(data, created_by=created_by)
-
-    async def update_role(self, role_id: UUID, data, updated_by: Optional[UUID] = None):
-        """Update a role."""
-        return await self.service.update_role(role_id, data, updated_by=updated_by)
-
-    async def delete_role(self, role_id: UUID, deleted_by: Optional[UUID] = None):
-        """Delete a role."""
-        return await self.service.delete_role(role_id, deleted_by=deleted_by)

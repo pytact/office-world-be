@@ -1,24 +1,29 @@
 """FastAPI endpoints for Companies System module.
 
-Based on F1A_api_spec.md - All endpoints with proper authentication, authorization,
-user scoping, company scoping, and StandardResponse format.
+Based on F4_api_spec.md - Platform Company Management (F-004).
+All endpoints with proper authentication, authorization, and StandardResponse format.
+ETag logic is in service layer per error_prevention.md RULE 19.
 """
 
 import logging
 from uuid import UUID
 from typing import Optional
 from fastapi import APIRouter, Depends, status, Header, Response, Request
+from fastapi.responses import Response as FastAPIResponse
 from src.schemas import StandardResponse
-from src.pagination import PagedCollection
 from src.companies.schemas import (
     CompanyListQuery,
     CompanyCreate,
     CompanyUpdate,
-    CompanyRead,
-    CompanyListItem,
+    CompanySummary,
+    CompanyDetail,
+    CompanyPaginatedResponse,
 )
-from src.companies.dependencies import CompanyApiDep, get_current_user_with_company
+from src.companies.dependencies import (
+    CompanyApiDep,
+)
 from src.users.dependencies import get_current_superadmin
+from src.companies.documentations.companies_api_doc import CompanyApiDocs
 from src.companies.constants import (
     SUCCESS_COMPANIES_RETRIEVED,
     SUCCESS_COMPANY_RETRIEVED,
@@ -26,6 +31,7 @@ from src.companies.constants import (
     SUCCESS_COMPANY_UPDATED,
     SUCCESS_COMPANY_DELETED,
 )
+from src.companies.utils import format_last_modified
 from src.users.models import User
 
 # Setup logger
@@ -38,23 +44,33 @@ router = APIRouter(
 )
 
 
+# ============================================================================
+# SuperAdmin Endpoints
+# ============================================================================
+
 @router.get(
     "",
-    response_model=StandardResponse[PagedCollection[CompanyListItem]],
-    summary="List companies",
-    description="List companies with pagination, filtering, and sorting. Supports filtering by name, slug, and is_active, and sorting by created_at, updated_at, name, or slug.",
+    response_model=StandardResponse[CompanyPaginatedResponse],
+    summary=CompanyApiDocs.list["summary"],
+    description=CompanyApiDocs.list["description"],
 )
 async def list_companies(
     request: Request,
     query: CompanyListQuery = Depends(CompanyListQuery),
     api: CompanyApiDep = Depends(CompanyApiDep),
-    user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
-) -> StandardResponse[PagedCollection[CompanyListItem]]:
-    """List companies with pagination, filtering, and sorting.
+    current_user: User = Depends(get_current_superadmin),
+    response: Response = None,
+) -> StandardResponse[CompanyPaginatedResponse]:
+    """List all companies with pagination, search, filtering, and sorting.
     
-    Based on standard pagination pattern.
+    Based on F4_api_spec.md Section 4.4.1 - GET /api/v1/companies.
+    Authorization: SuperAdmin only.
     """
-    user, company_id = user_company
+    # Generate X-Request-ID
+    from src.users.utils import generate_request_id
+    request_id = generate_request_id()
+    if response:
+        response.headers["X-Request-ID"] = request_id
     
     result = await api.list_companies_paginated(query)
     return StandardResponse(
@@ -65,27 +81,42 @@ async def list_companies(
 
 @router.get(
     "/{company_id}",
-    response_model=StandardResponse[CompanyRead],
-    summary="Get company by ID",
-    description="Retrieve a single company by its unique identifier.",
+    response_model=StandardResponse[CompanyDetail],
+    summary=CompanyApiDocs.get["summary"],
+    description=CompanyApiDocs.get["description"],
 )
 async def get_company(
     request: Request,
     company_id: UUID,
     api: CompanyApiDep = Depends(CompanyApiDep),
-    user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
+    current_user: User = Depends(get_current_superadmin),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     response: Response = None,
-) -> StandardResponse[CompanyRead]:
-    """Retrieve a single company by ID."""
-    user, company_id_param = user_company
+) -> StandardResponse[CompanyDetail] | FastAPIResponse:
+    """Get company details with user count.
     
-    result = await api.get_company_by_id(company_id)
+    Based on F4_api_spec.md Section 4.4.3 - GET /api/v1/companies/{company_id}.
+    Authorization: SuperAdmin only.
+    ETag logic in service layer per error_prevention.md RULE 19.
+    """
+    # Generate X-Request-ID
+    from src.users.utils import generate_request_id
+    request_id = generate_request_id()
+    if response:
+        response.headers["X-Request-ID"] = request_id
     
-    # Set ETag and Last-Modified headers (based on updated_at)
-    if hasattr(result, 'updated_at'):
-        from src.notifications.utils import generate_etag, format_last_modified
-        response.headers["ETag"] = generate_etag(result.updated_at)
-        response.headers["Last-Modified"] = format_last_modified(result.updated_at)
+    # Pass header to service (service handles ETag logic)
+    result = await api.get_company_by_id(company_id, if_none_match=if_none_match)
+    
+    # If service returned 304, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
+    
+    # Set headers from service result (router sets HTTP headers)
+    if hasattr(result, '_etag'):
+        response.headers["ETag"] = result._etag
+        response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     
     return StandardResponse(
         data=result,
@@ -95,25 +126,37 @@ async def get_company(
 
 @router.post(
     "",
-    response_model=StandardResponse[CompanyRead],
+    response_model=StandardResponse[CompanyDetail],
     status_code=status.HTTP_201_CREATED,
-    summary="Create company",
-    description="Create a new company with name, slug, and active status. Company name and slug must be unique.",
+    summary=CompanyApiDocs.create["summary"],
+    description=CompanyApiDocs.create["description"],
 )
 async def create_company(
     request: Request,
     data: CompanyCreate,
     api: CompanyApiDep = Depends(CompanyApiDep),
     current_user: User = Depends(get_current_superadmin),
-) -> StandardResponse[CompanyRead]:
+    response: Response = None,
+) -> StandardResponse[CompanyDetail]:
     """Create a new company.
     
-    Based on F1A_api_spec.md Section 4.1 - Company Resource.
-    
-    Authorization:
-    - SuperAdmin only
+    Based on F4_api_spec.md Section 4.4.2 - POST /api/v1/companies.
+    Authorization: SuperAdmin only.
     """
+    # Generate X-Request-ID
+    from src.users.utils import generate_request_id
+    request_id = generate_request_id()
+    if response:
+        response.headers["X-Request-ID"] = request_id
+    
     result = await api.create_company(data, created_by=current_user.id)
+    
+    # Set ETag and Last-Modified headers from service result
+    if hasattr(result, '_etag'):
+        response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified'):
+        response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    
     return StandardResponse(
         data=result,
         message=SUCCESS_COMPANY_CREATED,
@@ -122,9 +165,9 @@ async def create_company(
 
 @router.patch(
     "/{company_id}",
-    response_model=StandardResponse[CompanyRead],
-    summary="Update company",
-    description="Update a company's name, slug, and/or active status. Requires If-Match header for optimistic locking.",
+    response_model=StandardResponse[CompanyDetail],
+    summary=CompanyApiDocs.update["summary"],
+    description=CompanyApiDocs.update["description"],
 )
 async def update_company(
     request: Request,
@@ -134,37 +177,27 @@ async def update_company(
     current_user: User = Depends(get_current_superadmin),
     if_match: Optional[str] = Header(None, alias="If-Match"),
     response: Response = None,
-) -> StandardResponse[CompanyRead]:
-    """Update a company.
+) -> StandardResponse[CompanyDetail]:
+    """Update company information or activate/deactivate company.
     
-    Based on F1A_api_spec.md Section 4.1 - Company Resource.
-    
-    Authorization:
-    - SuperAdmin only
-    
-    Note: ETag validation is handled in service layer per error_prevention.md RULE 19.
-    For now, we'll implement basic If-Match validation.
+    Based on F4_api_spec.md Section 4.4.4 - PATCH /api/v1/companies/{company_id}.
+    Authorization: SuperAdmin only.
+    ETag validation in service layer per error_prevention.md RULE 19.
     """
-    # If-Match header validation (ETag from GET response)
-    if if_match:
-        # Get current company to check ETag
-        current_company = await api.get_company_by_id(company_id)
-        from src.notifications.utils import generate_etag
-        current_etag = generate_etag(current_company.updated_at)
-        if if_match != current_etag:
-            from src.companies.exceptions import PreconditionFailed
-            raise PreconditionFailed()
-    else:
-        # If-Match header is required for update operations
-        from src.companies.exceptions import PreconditionRequired
-        raise PreconditionRequired()
+    # Generate X-Request-ID
+    from src.users.utils import generate_request_id
+    request_id = generate_request_id()
+    if response:
+        response.headers["X-Request-ID"] = request_id
     
-    result = await api.update_company(company_id, update_data, updated_by=current_user.id)
+    # Pass header to service (service handles validation)
+    result = await api.update_company(
+        company_id, update_data, if_match=if_match, updated_by=current_user.id
+    )
     
-    # Set new ETag after update
-    if hasattr(result, 'updated_at'):
-        from src.notifications.utils import generate_etag
-        response.headers["ETag"] = generate_etag(result.updated_at)
+    # Set ETag header from service result
+    if hasattr(result, '_etag'):
+        response.headers["ETag"] = result._etag
     
     return StandardResponse(
         data=result,
@@ -175,24 +208,30 @@ async def update_company(
 @router.delete(
     "/{company_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete company",
-    description="Soft delete a company. Cannot delete a company that has active users.",
+    summary=CompanyApiDocs.delete["summary"],
+    description=CompanyApiDocs.delete["description"],
 )
 async def delete_company(
     request: Request,
     company_id: UUID,
     api: CompanyApiDep = Depends(CompanyApiDep),
     current_user: User = Depends(get_current_superadmin),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    response: Response = None,
 ) -> Response:
-    """Soft delete a company.
+    """Hard delete a company.
     
-    Based on F1A_api_spec.md Section 4.1 - Company Resource.
-    
-    Authorization:
-    - SuperAdmin only
-    
-    Note: Cannot delete a company that has active users.
+    Based on F4_api_spec.md Section 4.4.5 - DELETE /api/v1/companies/{company_id}.
+    Authorization: SuperAdmin only.
+    ETag validation in service layer per error_prevention.md RULE 19.
     """
-    await api.delete_company(company_id, deleted_by=current_user.id)
+    # Generate X-Request-ID
+    from src.users.utils import generate_request_id
+    request_id = generate_request_id()
+    if response:
+        response.headers["X-Request-ID"] = request_id
+    
+    # Pass header to service (service handles validation)
+    await api.delete_company(company_id, if_match=if_match)
     
     return Response(status_code=status.HTTP_204_NO_CONTENT)
