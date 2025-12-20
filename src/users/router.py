@@ -23,7 +23,6 @@ from src.users.schemas import (
     RoleRead,
     CompanyRead,
     RolesListResponse,
-    CompaniesListResponse,
 )
 from src.users.utils import generate_request_id, format_last_modified
 from src.users.dependencies import (
@@ -40,7 +39,6 @@ from src.users.constants import (
     SUCCESS_USER_INVITED,
     SUCCESS_USER_UPDATED,
     SUCCESS_ROLES_RETRIEVED,
-    SUCCESS_COMPANIES_RETRIEVED,
     SUCCESS_USER_ROLE_UPDATED,
     SUCCESS_USER_REASSIGNED,
     SUCCESS_USER_DEACTIVATED,
@@ -91,13 +89,14 @@ async def list_platform_users(
 
 
 @router.get(
-    "/company/users",
+    "/companies/{company_id}/users",
     response_model=StandardResponse[PagedCollection[UserListItem]],
     summary=UserApiDocs.list_company_users["summary"],
     description=UserApiDocs.list_company_users["description"],
 )
 async def list_company_users(
     request: Request,
+    company_id: UUID,
     query: CompanyUserListQuery = Depends(CompanyUserListQuery),
     api: UserApiDep = Depends(UserApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_company_user),
@@ -105,9 +104,15 @@ async def list_company_users(
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     response: Response = None,
 ) -> StandardResponse[PagedCollection[UserListItem]]:
-    """List users in authenticated user's company.
+    """List users in a specific company.
     
-    Based on F1A_api_spec.md Section 5.2 - GET /api/v1/company/users.
+    Based on F1A_api_spec.md Section 5.2 - GET /api/v1/companies/{company_id}/users.
+    
+    Authorization:
+    - SuperAdmin: Can access any company
+    - CEO, HR: Can only access their own company
+    - Manager: Can only access their own company (restricted field set)
+    - Employee: Access denied (403)
     
     Field visibility rules:
     - SuperAdmin, CEO, HR: Full field set
@@ -119,7 +124,7 @@ async def list_company_users(
     if response:
         response.headers["X-Request-ID"] = request_id
     
-    user, company_id = user_company
+    current_user, user_company_id = user_company
     
     # Normalize role to lowercase for comparisons
     role_lower = role.lower() if role else None
@@ -128,10 +133,52 @@ async def list_company_users(
     if role_lower == ROLE_CODE_EMPLOYEE.lower():
         raise InsufficientPermissions("view user lists")
     
+    # Authorization: CEO, HR, Manager can only access their own company
+    # SuperAdmin can access any company
+    if role_lower not in [ROLE_CODE_SUPERADMIN.lower()]:
+        if user_company_id is None or user_company_id != company_id:
+            raise InsufficientPermissions("view users from other companies")
+    
     # Determine field visibility based on role
     include_sensitive = role_lower != ROLE_CODE_MANAGER.lower()
     
     result = await api.list_company_users(company_id, query, include_sensitive=include_sensitive)
+    
+    # Update pagination URLs with company_id
+    from src.config import settings
+    base_path = f"/api{settings.api_prefix}/companies/{company_id}/users"
+    
+    # Build query params for pagination URLs
+    query_params = []
+    if query.page_size != 20:
+        query_params.append(f"page_size={query.page_size}")
+    if query.search:
+        query_params.append(f"search={query.search}")
+    if query.role_code:
+        query_params.append(f"role_code={query.role_code}")
+    if query.status:
+        query_params.append(f"status={query.status}")
+    if query.sort_by != "created_at":
+        query_params.append(f"sort_by={query.sort_by}")
+    if query.sort_order != "desc":
+        query_params.append(f"sort_order={query.sort_order}")
+    
+    # Update next_page
+    if result.page < result.total_pages:
+        next_params = query_params.copy()
+        next_params.append(f"page={result.page + 1}")
+        result.next_page = f"{base_path}?{'&'.join(next_params)}"
+    else:
+        result.next_page = None
+    
+    # Update prev_page
+    if result.page > 1:
+        prev_params = query_params.copy()
+        prev_params.append(f"page={result.page - 1}")
+        result.prev_page = f"{base_path}?{'&'.join(prev_params)}"
+    else:
+        result.prev_page = None
+    
     return StandardResponse(
         data=result,
         message=SUCCESS_USERS_RETRIEVED,
@@ -376,34 +423,6 @@ async def list_roles(
     return StandardResponse(
         data=result,
         message=SUCCESS_ROLES_RETRIEVED,
-    )
-
-
-@router.get(
-    "/companies",
-    response_model=StandardResponse[CompaniesListResponse],
-    summary=UserApiDocs.list_companies["summary"],
-    description=UserApiDocs.list_companies["description"],
-)
-async def list_companies(
-    request: Request,
-    api: UserApiDep = Depends(UserApiDep),
-    current_user: User = Depends(get_current_superadmin),
-    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
-    response: Response = None,
-) -> StandardResponse[CompaniesListResponse]:
-    """List all companies for SuperAdmin invitation form.
-    
-    Based on F1A_api_spec.md Section 5.7 - GET /api/v1/companies.
-    
-    Authorization:
-    - SuperAdmin only
-    """
-    # X-Request-ID is handled by middleware
-    result = await api.list_companies()
-    return StandardResponse(
-        data=result,
-        message=SUCCESS_COMPANIES_RETRIEVED,
     )
 
 

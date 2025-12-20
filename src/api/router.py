@@ -4,6 +4,9 @@ from fastapi import APIRouter
 from src.config import settings
 from src.auth.router import router as auth_router
 from src.users.router import router as users_router
+from src.notifications.router import router as notifications_router
+from src.permissions.router import router as permissions_router
+from src.companies.router import router as companies_router
 
 # Create main API router
 api_router = APIRouter(prefix=settings.api_prefix)
@@ -11,6 +14,9 @@ api_router = APIRouter(prefix=settings.api_prefix)
 # Register domain routers
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
+api_router.include_router(notifications_router)
+api_router.include_router(permissions_router)
+api_router.include_router(companies_router)
 
 # TODO: Register other domain routers when implemented:
 # from src.users.router import router as users_router

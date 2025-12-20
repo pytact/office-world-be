@@ -120,7 +120,7 @@ app = FastAPI(
     version=settings.api_version,
     debug=settings.debug,
     swagger_ui_parameters={
-        "persistAuthorization": False,  # Persist authorization token on page refresh
+        "persistAuthorization": True,  # Persist authorization token on page refresh (auth_setup.md RULE 13.1.1)
         "tryItOutEnabled": True,  # Enable "Try it out" by default
     },
 )

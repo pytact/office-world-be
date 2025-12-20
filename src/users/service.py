@@ -345,9 +345,10 @@ class UserService:
         # Calculate pagination
         total_pages = (total + query.page_size - 1) // query.page_size if total > 0 else 0
         
-        # Build navigation URLs
-        next_page = f"/api/v1/company/users?page={query.page + 1}&page_size={query.page_size}" if query.page < total_pages else None
-        prev_page = f"/api/v1/company/users?page={query.page - 1}&page_size={query.page_size}" if query.page > 1 else None
+        # Build navigation URLs (will be updated by router with company_id)
+        # These are placeholders - actual URLs should include company_id
+        next_page = None
+        prev_page = None
         
         return PagedCollection[UserListItem](
             items=items,

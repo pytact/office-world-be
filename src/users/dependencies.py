@@ -166,10 +166,6 @@ class UserApiDep:
         """List available roles for invitation form."""
         return await self.service.list_roles()
 
-    async def list_companies(self):
-        """List all active companies for SuperAdmin invitation form."""
-        return await self.service.list_companies()
-
     # F1B Lifecycle Operations API Methods
     async def change_user_role(
         self,

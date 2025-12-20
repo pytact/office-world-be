@@ -1,0 +1,113 @@
+================================================================================
+SECTION 10 — ENTITY RELATIONSHIP DIAGRAM (ERD)
+================================================================================
+
+ASCII ERD - Crow's Foot Notation
+Canvas Mode - Monospace Alignment
+
+================================================================================
+
+                        +------------------+
+                        |     users        |
+                        +------------------+
+                        | id (PK)          |
+                        +------------------+
+                                 |
+                                 | 1
+                                 |
+                                 | M
+                                 |
+                        +------------------+
+                        |  notifications   |
+                        +------------------+
+                        | id (PK)          |
+                        | user_id (FK)     |<---+
+                        | company_id (FK)  |    |
+                        +------------------+    |
+                                 |              |
+                                 |              |
+                                 |              |
+                    +------------+              |
+                    |                           |
+                    | 1                         |
+                    |                           |
+                    | M                         |
+            +------------------+                |
+            |    companies     |                |
+            +------------------+                |
+            | id (PK)          |                |
+            +------------------+                |
+                                                
+                                                
+================================================================================
+POLYMORPHIC RELATIONSHIPS (Conceptual)
+================================================================================
+
+The notifications table has optional polymorphic relationships to leaves and tasks
+via the related_record_id and related_table fields:
+
+    +------------------+                    +------------------+
+    |    leaves        |                    |     tasks       |
+    +------------------+                    +------------------+
+    | id (PK)          |                    | id (PK)          |
+    +------------------+                    +------------------+
+            ^                                        ^
+            |                                        |
+            | *..1 (optional)                       | *..1 (optional)
+            |                                        |
+            | (when related_table = 'leaves')       | (when related_table = 'tasks')
+            |                                        |
+    +------------------+                    +------------------+
+    |  notifications   |                    |  notifications   |
+    +------------------+                    +------------------+
+    | id (PK)          |                    | id (PK)          |
+    | related_record_id|                    | related_record_id|
+    | related_table    |                    | related_table    |
+    +------------------+                    +------------------+
+
+**Note:** The polymorphic relationship is implemented via:
+- related_record_id (UUID, nullable): References leaves.id or tasks.id
+- related_table (VARCHAR, nullable): Contains 'leaves' or 'tasks' to indicate target table
+
+This is a logical relationship enforced at the application layer, not a database foreign key constraint.
+
+================================================================================
+RELATIONSHIP SUMMARY
+================================================================================
+
+1. users (1) ←→ (M) notifications
+   - One user can receive many notifications
+   - Each notification belongs to exactly one user
+   - Foreign Key: notifications.user_id → users.id
+   - Cardinality: 1:M (One-to-Many)
+
+2. companies (1) ←→ (M) notifications
+   - One company can have many notifications
+   - Each notification is scoped to exactly one company
+   - Foreign Key: notifications.company_id → companies.id
+   - Cardinality: 1:M (One-to-Many)
+
+3. leaves (1) ←→ (0..M) notifications (Polymorphic - Optional)
+   - One leave can have zero or more related notifications
+   - Relationship exists when related_table = 'leaves'
+   - Logical relationship via related_record_id
+   - Cardinality: 1:0..M (One-to-Zero-or-Many, Optional)
+
+4. tasks (1) ←→ (0..M) notifications (Polymorphic - Optional)
+   - One task can have zero or more related notifications
+   - Relationship exists when related_table = 'tasks'
+   - Logical relationship via related_record_id
+   - Cardinality: 1:0..M (One-to-Zero-or-Many, Optional)
+
+================================================================================
+NOTES
+================================================================================
+
+- All relationships shown use Crow's Foot notation
+- Only PRIMARY KEY (id) and FOREIGN KEY fields are displayed
+- Business fields (type, title, message, channel, etc.) are excluded per ERD rules
+- Audit fields (created_at, updated_at, etc.) are excluded per ERD rules
+- Polymorphic relationships to leaves/tasks are logical (application-enforced), not database constraints
+
+================================================================================
+
