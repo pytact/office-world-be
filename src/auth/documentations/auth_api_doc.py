@@ -1,0 +1,37 @@
+"""API documentation for Authentication endpoints."""
+
+from typing import ClassVar
+
+
+class AuthApiDocs:
+    """API documentation for Authentication endpoints."""
+
+    login: ClassVar[dict] = {
+        "summary": "Authenticate user with email and password",
+        "description": "Validates user credentials and returns JWT access token with role and organization context. Validates user account is active, not soft-deleted, and company is active (for non-SuperAdmin users).",
+    }
+
+    logout: ClassVar[dict] = {
+        "summary": "Invalidate user session",
+        "description": "Logs out the authenticated user by invalidating their session token. This endpoint requires JWT Bearer token authentication.",
+    }
+
+    get_activation: ClassVar[dict] = {
+        "summary": "Validate invitation token",
+        "description": "Validates invitation token and returns activation details for account setup. Token must be valid, not expired (24 hours from invite_at), and user must not be already activated.",
+    }
+
+    activate_account: ClassVar[dict] = {
+        "summary": "Activate user account",
+        "description": "Completes user account activation using invitation token and provided credentials. Validates token, checks expiry, verifies user is not already activated, and validates password complexity requirements.",
+    }
+
+    request_password_reset: ClassVar[dict] = {
+        "summary": "Request password reset",
+        "description": "Initiates password reset process by sending reset token via email. Response is identical regardless of whether email exists to prevent email enumeration attacks.",
+    }
+
+    reset_password: ClassVar[dict] = {
+        "summary": "Reset user password",
+        "description": "Resets user password using valid reset token and new password. Validates token, checks expiry, verifies token is not already used, and validates password complexity requirements.",
+    }

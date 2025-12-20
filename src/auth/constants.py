@@ -1,0 +1,46 @@
+"""Domain-specific constants for authentication."""
+
+# Error Messages
+ERROR_INVALID_CREDENTIALS = "Invalid email or password"
+ERROR_ACCOUNT_INACTIVE = "User account is deactivated"
+ERROR_ACCOUNT_DELETED = "User account is soft-deleted"
+ERROR_COMPANY_INACTIVE = "User's company is inactive"
+ERROR_INVALID_TOKEN = "Invalid or malformed token"
+ERROR_INVITATION_NOT_FOUND = "Invitation token not found"
+ERROR_INVITATION_EXPIRED = "Invitation has expired"
+ERROR_ACCOUNT_ALREADY_ACTIVATED = "User account is already activated"
+ERROR_PASSWORD_MISMATCH = "Password confirmation does not match"
+ERROR_PASSWORD_WEAK = "Password does not meet complexity requirements"
+ERROR_RESET_TOKEN_NOT_FOUND = "Password reset token not found"
+ERROR_RESET_TOKEN_EXPIRED = "Password reset token has expired"
+ERROR_RESET_TOKEN_USED = "Password reset token has already been used"
+
+# Success Messages
+SUCCESS_LOGIN = "Login successful"
+SUCCESS_LOGOUT = "Logout successful"
+SUCCESS_INVITATION_VALID = "Invitation token is valid"
+SUCCESS_ACCOUNT_ACTIVATED = "Account activated successfully"
+SUCCESS_PASSWORD_RESET_REQUESTED = "Password reset email sent successfully"
+SUCCESS_PASSWORD_RESET = "Password reset successfully"
+
+# Error Codes
+ERROR_CODE_INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+ERROR_CODE_ACCOUNT_INACTIVE = "ACCOUNT_INACTIVE"
+ERROR_CODE_ACCOUNT_DELETED = "ACCOUNT_DELETED"
+ERROR_CODE_COMPANY_INACTIVE = "COMPANY_INACTIVE"
+ERROR_CODE_INVALID_TOKEN = "INVALID_TOKEN"
+ERROR_CODE_INVITATION_NOT_FOUND = "INVITATION_NOT_FOUND"
+ERROR_CODE_INVITATION_EXPIRED = "INVITATION_EXPIRED"
+ERROR_CODE_ACCOUNT_ALREADY_ACTIVATED = "ACCOUNT_ALREADY_ACTIVATED"
+ERROR_CODE_PASSWORD_MISMATCH = "PASSWORD_MISMATCH"
+ERROR_CODE_PASSWORD_WEAK = "PASSWORD_WEAK"
+ERROR_CODE_RESET_TOKEN_NOT_FOUND = "RESET_TOKEN_NOT_FOUND"
+ERROR_CODE_RESET_TOKEN_EXPIRED = "RESET_TOKEN_EXPIRED"
+ERROR_CODE_RESET_TOKEN_USED = "RESET_TOKEN_USED"
+
+# Token Expiry (in hours)
+INVITATION_TOKEN_EXPIRY_HOURS = 24
+PASSWORD_RESET_TOKEN_EXPIRY_HOURS = 24
+
+# JWT Token Expiry (in seconds)
+JWT_ACCESS_TOKEN_EXPIRY_SECONDS = 3600  # 1 hour

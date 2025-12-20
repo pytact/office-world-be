@@ -1,0 +1,102 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: office_world2_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 1112
+      POSTGRES_DB: office_world
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: office_world2_redis
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    build: .
+    container_name: office_world2_migrate
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:1112@db:5432/office_world
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    container_name: office_world2_api
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:1112@db:5432/office_world
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      EMAIL_SENDER: shahidm@pytact.com
+      EMAIL_APP_PASSWORD: pnkd sowf pghx tiqq
+      EMAIL_SMTP_HOST: smtp.gmail.com
+      EMAIL_SMTP_PORT: 587
+      JWT_SECRET_KEY: your-secret-key-change-in-production
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_SECONDS: 3600
+      ENVIRONMENT: local
+      DEBUG: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./alembic:/app/alembic
+
+  worker:
+    build: .
+    container_name: office_world2_worker
+    command: celery -A src.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:1112@db:5432/office_world
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      EMAIL_SENDER: shahidm@pytact.com
+      EMAIL_APP_PASSWORD: pnkd sowf pghx tiqq
+      EMAIL_SMTP_HOST: smtp.gmail.com
+      EMAIL_SMTP_PORT: 587
+      ENVIRONMENT: local
+      DEBUG: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./alembic:/app/alembic
+
+volumes:
+  postgres_data:

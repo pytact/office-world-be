@@ -1,0 +1,79 @@
+================================================================================
+F-002 — RBAC & Permission Engine
+ASCII ER DIAGRAM (Crow's Foot Notation)
+================================================================================
+
+NOTE: F-002 introduces NO new persisted entities.
+Permissions are stored as JSONB in the existing 'roles' table.
+PermissionSet and PermissionCache are computed/cached (not persisted).
+
+================================================================================
+
++--------------------+             +--------------------------+             +--------------------+
+|       users        |   1     1   |  user_role_assignments   |   M     1   |       roles        |
++--------------------+             +--------------------------+             +--------------------+
+| id (PK)            |<----------->| id (PK)                  |<------------>| id (PK)            |
+|                    |             | user_id (FK)             |              |                    |
+|                    |             | role_id (FK)             |              |                    |
+|                    |             | company_id (FK)          |              |                    |
++--------------------+             +--------------------------+             +--------------------+
+                                            ^
+                                            | M
+                                            |
+                                            | 1
+                                            |
++--------------------+                      |
+|     companies      |                      |
++--------------------+                      |
+| id (PK)            |<---------------------+
+|                    |
++--------------------+
+
+================================================================================
+RELATIONSHIP CARDINALITY:
+================================================================================
+
+1. User (1) ←→ (1) UserRoleAssignment
+   - Each user has exactly one active role assignment at a time
+   - Enforced by unique constraint: (user_id) WHERE is_active = true AND deleted_at IS NULL
+
+2. Role (1) ←→ (M) UserRoleAssignment
+   - Each role can be assigned to many users across different companies
+   - Permissions stored as JSONB in roles.permissions column
+
+3. Company (1) ←→ (M) UserRoleAssignment
+   - Each company has many user role assignments
+   - company_id is NULL for SuperAdmin users (global access)
+   - Company scoping enables permission evaluation boundaries
+
+================================================================================
+PERMISSION EVALUATION FLOW:
+================================================================================
+
+1. User → UserRoleAssignment → Role
+   - User's active assignment links to their role
+   - Role contains permissions as JSONB (resource → actions mapping)
+
+2. UserRoleAssignment.company_id
+   - Provides company context for permission scoping
+   - NULL for SuperAdmin (no company scope)
+   - UUID for company-scoped users (permissions evaluated within company)
+
+3. PermissionSet Computation (Runtime, Not Persisted)
+   - Computed from: Role.permissions (JSONB) + Company context + User activation status
+   - Cached in Redis (PermissionCache) keyed by user_id
+   - Automatically invalidated on role/user/company changes
+
+================================================================================
+NOTES:
+================================================================================
+
+- Only Primary Key (id) and Foreign Key fields are shown per ERD rules
+- Business fields (name, email, permissions JSONB, etc.) are excluded
+- Audit fields (created_at, updated_at, etc.) are excluded
+- PermissionSet and PermissionCache are NOT shown (computed/cached, not persisted)
+- Permissions are stored as JSONB in roles.permissions column (not a separate table)
+- Role inheritance is resolved at seed time (not runtime, not shown in ERD)
+
+================================================================================
+

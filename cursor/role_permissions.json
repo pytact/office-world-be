@@ -1,0 +1,81 @@
+{
+  "SuperAdmin": {
+    "id": 1,
+    "code": "SuperAdmin",
+    "name": "SuperAdmin",
+    "description": "Platform-level administrator with full access. Can assign companies to users via users_roles.",
+    "permissions": {
+      "companies": ["create", "read", "update", "delete"],
+      "users": ["create", "read", "update", "delete"],
+      "users_roles": ["create", "read", "update", "delete"],
+      "roles": ["read"],
+      "kpis": ["read"]
+    },
+    "capabilities": [
+      "assign_company_to_user",
+      "manage_all_companies",
+      "manage_all_users",
+      "assign_roles_to_users"
+    ]
+  },
+  "CEO": {
+    "id": 2,
+    "code": "CEO",
+    "name": "CEO",
+    "permissions": {
+      "employees": ["create", "read", "update", "delete"],
+      "salary": ["create", "read", "update", "delete"],
+      "salary_history": ["read"],
+      "projects": ["create", "read", "update", "delete"],
+      "tasks": ["create", "read", "update", "delete"],
+      "task_assignments": ["create", "read", "update", "delete"],
+      "attendance": ["read"],
+      "leaves": ["read", "approve"],
+      "holidays": ["create", "read", "update", "delete"],
+      "users_roles": ["create", "read", "update"],
+      "kpis": ["read"]
+    }
+  },
+  "HR": {
+    "id": 3,
+    "code": "HR",
+    "name": "HR",
+    "permissions": {
+      "employees": ["create", "read", "update"],
+      "salary": ["create", "read", "update", "delete"],
+      "salary_history": ["read"],
+      "attendance": ["read"],
+      "leaves": ["read", "approve"],
+      "holidays": ["create", "read", "update", "delete"],
+      "users_roles": ["create", "read", "update"]
+    }
+  },
+  "Manager": {
+    "id": 4,
+    "code": "Manager",
+    "name": "Manager",
+    "permissions": {
+      "employees": ["read"],
+      "projects": ["create", "read", "update", "delete"],
+      "tasks": ["create", "read", "update", "delete"],
+      "task_assignments": ["create", "read", "update", "delete"],
+      "attendance": ["read"],
+      "leaves": ["read", "approve"],
+      "kpis": ["read"]
+    }
+  },
+  "Employee": {
+    "id": 5,
+    "code": "Employee",
+    "name": "Employee",
+    "permissions": {
+      "employees": ["read", "update"],
+      "tasks": ["read", "update"],
+      "task_assignments": ["create", "read"],
+      "leaves": ["create", "read"],
+      "attendance": ["create", "read"],
+      "holidays": ["read"],
+      "salary": ["read"]
+    }
+  }
+}

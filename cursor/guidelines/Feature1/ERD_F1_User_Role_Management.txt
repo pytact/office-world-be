@@ -1,0 +1,54 @@
+================================================================================
+                    ENTITY RELATIONSHIP DIAGRAM (ERD)
+              F-001 — User & Role Management Feature
+================================================================================
+
++----------------------+             +--------------------------+             +----------------------+
+|        User          |   1    1    |   UserRoleAssignment     |   1    M    |        Role          |
++----------------------+             +--------------------------+             +----------------------+
+| id (PK)              |<----------->| id (PK)                  |<----------->| id (PK)              |
++----------------------+             | user_id (FK)             |             +----------------------+
+                                     | role_id (FK)             |
+                                     | company_id (FK)          |
++----------------------+             +--------------------------+
+|      Company         |   1    M    |
++----------------------+             |
+| id (PK)              |<------------+
++----------------------+
+
+
++----------------------+             +--------------------------+
+|        User          |   1   0..1  |       Employee           |
++----------------------+             +--------------------------+
+| id (PK)              |<----------->| id (PK)                  |
++----------------------+             | user_id (FK)             |
+                                     +--------------------------+
+
+
+================================================================================
+RELATIONSHIP CARDINALITY:
+================================================================================
+
+1. User 1..1 UserRoleAssignment
+   - Each user has exactly one active role assignment
+
+2. Company 1..* UserRoleAssignment
+   - Each company has many user role assignments
+   - company_id is NULL for SuperAdmin users
+
+3. Role 1..* UserRoleAssignment
+   - Each role can be assigned to many users
+
+4. User 0..1 Employee
+   - Each user may have zero or one employee record
+   - SuperAdmin users do not have employee records
+
+================================================================================
+NOTES:
+- UserRoleAssignment.company_id is nullable (NULL for SuperAdmin)
+- UserRoleAssignment enforces one active assignment per user
+- Employee relationship is optional (0..1)
+- Only Primary Key (id) and Foreign Key fields are shown
+- Business fields and audit fields are excluded per ERD rules
+================================================================================
+
