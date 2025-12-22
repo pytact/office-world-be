@@ -1,0 +1,43 @@
+================================================================================
+                    ENTITY RELATIONSHIP DIAGRAM (ERD)
+                    Feature: F-007 — Project Management
+                    Project: officeWorld
+================================================================================
+
+RELATIONSHIP CARDINALITY:
+- Company 1..* Project (One Company has many Projects)
+- Project 0..* Task (One Project has zero or more Tasks)
+- Task 0..1 Project (Task may or may not belong to a Project)
+
+================================================================================
+
+                    +------------------+              +------------------+
+                    |    Companies     |     1    *   |    Projects      |
+                    +------------------+<------------->+------------------+
+                    | id (PK)          |              | id (PK)          |
+                    +------------------+              | company_id (FK)  |
+                                                      +------------------+
+                                                              |
+                                                              | 1
+                                                              |
+                                                              |
+                                                              | *
+                                                      +------------------+
+                                                      |      Tasks       |
+                                                      +------------------+
+                                                      | id (PK)          |
+                                                      | project_id (FK)  |
+                                                      +------------------+
+
+================================================================================
+
+NOTES:
+- Projects belong to exactly one Company (company_id is NOT NULL)
+- Tasks may exist without a Project (project_id is NULLABLE)
+- Projects can have zero or more Tasks
+- Cascade deletion: Deleting a Project soft-deletes associated Tasks (application-level)
+- All tables include audit fields (created_at, updated_at, created_by, updated_by, deleted_at, deleted_by)
+- Projects table includes soft-delete marker (deleted_at)
+
+================================================================================
+

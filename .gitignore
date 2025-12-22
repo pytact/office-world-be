@@ -51,7 +51,6 @@ Thumbs.db
 # Alembic
 alembic/versions/*.pyc
 
-# Feature 6 - Salary Management (Do not push to server)
-src/salaries/
-cursor/guidelines/Feature6/
+# Rules and guidelines (internal documentation)
+cursor/rules/
 

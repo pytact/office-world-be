@@ -8,8 +8,7 @@ from src.notifications.router import router as notifications_router
 from src.permissions.router import router as permissions_router
 from src.companies.router import router as companies_router
 from src.employees.router import router as employees_router, delete_router as employees_delete_router
-# Feature 6 - Salary Management (commented out - not pushed to server)
-# from src.salaries.router import router as salaries_router
+from src.salaries.router import router as salaries_router
 
 # Create main API router
 api_router = APIRouter(prefix=settings.api_prefix)
@@ -22,8 +21,7 @@ api_router.include_router(permissions_router)
 api_router.include_router(companies_router)
 api_router.include_router(employees_router)
 api_router.include_router(employees_delete_router)
-# Feature 6 - Salary Management (commented out - not pushed to server)
-# api_router.include_router(salaries_router)
+api_router.include_router(salaries_router)
 
 # TODO: Register other domain routers when implemented:
 # from src.users.router import router as users_router

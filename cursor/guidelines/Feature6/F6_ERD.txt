@@ -1,0 +1,75 @@
+================================================================================
+                    ASCII ER DIAGRAM - F-006 Salary Management
+                    (Crow's Foot Notation - PK and FK Fields Only)
+================================================================================
+
+Note: Employee entity is from F-005 (Employee Management) and is included
+      here to show relationships. Only PK and FK fields are shown per rules.
+
++----------------------+              +----------------------+
+|      employees       |   1      1   |      bank_info       |
+|   (F-005 Entity)     |<------------>|                      |
++----------------------+              +----------------------+
+| id (PK)              |              | id (PK)              |
+|                      |              | employee_id (FK)     |
++----------------------+              +----------------------+
+
+
++----------------------+              +----------------------+
+|      employees       |   1      M   |   salary_details     |
+|   (F-005 Entity)     |<------------>|                      |
++----------------------+              +----------------------+
+| id (PK)              |              | id (PK)              |
+|                      |              | employee_id (FK)     |
++----------------------+              +----------------------+
+
+
++----------------------+              +----------------------+
+|      employees       |   1      M   |   salary_payments    |
+|   (F-005 Entity)     |<------------>|                      |
++----------------------+              +----------------------+
+| id (PK)              |              | id (PK)              |
+|                      |              | employee_id (FK)     |
++----------------------+              +----------------------+
+
+
++----------------------+              +----------------------+
+|   salary_details     |   1      M   |   salary_history     |
++----------------------+<------------>|                      |
+| id (PK)              |              | id (PK)              |
+| employee_id (FK)     |              | salary_details_id    |
++----------------------+              |        (FK)           |
+                                      +----------------------+
+
+
+================================================================================
+                           RELATIONSHIP SUMMARY
+================================================================================
+
+1. employees (1) ────< (M) bank_info
+   - One employee has exactly one bank account
+   - One bank account belongs to exactly one employee
+
+2. employees (1) ────< (M) salary_details
+   - One employee can have multiple salary configurations (historical)
+   - One salary configuration belongs to exactly one employee
+
+3. employees (1) ────< (M) salary_payments
+   - One employee can have multiple salary payments
+   - One salary payment belongs to exactly one employee
+
+4. salary_details (1) ────< (M) salary_history
+   - One salary configuration can have multiple history records
+   - One history record belongs to exactly one salary configuration
+
+================================================================================
+                              CARDINALITY NOTES
+================================================================================
+
+- employees ↔ bank_info: 1:1 (one-to-one, mandatory on both sides)
+- employees ↔ salary_details: 1:M (one-to-many, employee required)
+- employees ↔ salary_payments: 1:M (one-to-many, employee required)
+- salary_details ↔ salary_history: 1:M (one-to-many, salary_details required)
+
+================================================================================
+
