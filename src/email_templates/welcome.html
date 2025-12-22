@@ -1,11 +1,186 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Welcome</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to Office World</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f4f4f4;
+            line-height: 1.6;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+        .email-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 30px;
+            text-align: center;
+            color: #ffffff;
+        }
+        .email-header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .email-body {
+            padding: 40px 30px;
+            color: #333333;
+        }
+        .greeting {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        .content-text {
+            font-size: 16px;
+            color: #555555;
+            margin-bottom: 20px;
+        }
+        .success-box {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        .success-text {
+            color: #155724;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0;
+        }
+        .info-box {
+            background-color: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        .info-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .info-list {
+            color: #555555;
+            font-size: 14px;
+            margin: 0;
+            padding-left: 20px;
+        }
+        .info-list li {
+            margin-bottom: 8px;
+        }
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 16px 40px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 16px;
+            margin: 30px 0;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);
+            transition: transform 0.2s;
+        }
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+        }
+        .button-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        .email-footer {
+            background-color: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 14px;
+            border-top: 1px solid #dee2e6;
+        }
+        .footer-text {
+            margin: 10px 0;
+        }
+        @media only screen and (max-width: 600px) {
+            .email-body {
+                padding: 30px 20px;
+            }
+            .email-header {
+                padding: 30px 20px;
+            }
+            .cta-button {
+                padding: 14px 30px;
+                font-size: 15px;
+            }
+        }
+    </style>
 </head>
 <body>
-    <h1>Welcome!</h1>
-    <p>Thank you for joining us.</p>
+    <div class="email-container">
+        <!-- Header -->
+        <div class="email-header">
+            <h1>🎉 Welcome to Office World!</h1>
+        </div>
+        
+        <!-- Body -->
+        <div class="email-body">
+            <div class="greeting">
+                Hello {{ user_name }},
+            </div>
+            
+            <div class="content-text">
+                We're thrilled to welcome you to <strong>Office World</strong>! Your account has been successfully activated and you're all set to get started.
+            </div>
+            
+            <!-- Success Box -->
+            <div class="success-box">
+                <p class="success-text">✅ Your account is now active!</p>
+            </div>
+            
+            <div class="content-text">
+                You can now log in to your account and start exploring all the features we have to offer.
+            </div>
+            
+            <!-- Info Box -->
+            <div class="info-box">
+                <div class="info-title">What's Next?</div>
+                <ul class="info-list">
+                    <li>Log in to your account using your email: <strong>{{ user_email }}</strong></li>
+                    <li>Explore the dashboard and familiarize yourself with the platform</li>
+                    <li>Complete your profile to get the most out of Office World</li>
+                    <li>Reach out to our support team if you need any assistance</li>
+                </ul>
+            </div>
+            
+            <!-- CTA Button -->
+            <div class="button-container">
+                <a href="http://localhost:3000/login" class="cta-button">Log In to Your Account</a>
+            </div>
+            
+            <div class="content-text">
+                We're here to help you succeed. If you have any questions or need support, don't hesitate to contact us.
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="email-footer">
+            <div class="footer-text">
+                Welcome to the Office World family!
+            </div>
+            <div class="footer-text">
+                Best regards,<br>
+                The Office World Team
+            </div>
+        </div>
+    </div>
 </body>
 </html>
-

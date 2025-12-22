@@ -55,6 +55,8 @@ import src.users.models  # noqa: F401
 import src.employees.models  # noqa: F401 - Required for User.employee relationship
 import src.permissions.models  # noqa: F401
 import src.companies.models  # noqa: F401
+# Feature 6 - Salary Management (commented out - not pushed to server)
+# import src.salaries.models  # noqa: F401 - Required for Employee salary relationships
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

@@ -77,8 +77,8 @@ class User(Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    token: Mapped[str | None] = mapped_column(
-        String(255),
+    token: Mapped[UUID | None] = mapped_column(
+        PostgresUUID(as_uuid=True),
         nullable=True,
     )
     reinvite_count: Mapped[int] = mapped_column(

@@ -46,6 +46,7 @@ from src.auth.constants import (
     ERROR_PASSWORD_WEAK,
 )
 from src.config import settings
+from src.celery_worker import send_password_reset_email, send_welcome_email
 
 
 class AuthService:
@@ -200,6 +201,13 @@ class AuthService:
         role_assignment = await self.repository.get_active_role_assignment(user.id)
         role_code = role_assignment.role.code if role_assignment and role_assignment.role else "employee"
 
+        # Send welcome email after successful activation
+        user_name = f"{user.first_name} {user.last_name}".strip() if user.first_name or user.last_name else user.email.split("@")[0]
+        send_welcome_email.delay(
+            user_email=user.email,
+            user_name=user_name,
+        )
+
         return ActivationResponse(
             user_id=user.id,
             email=user.email,
@@ -216,15 +224,25 @@ class AuthService:
         user = await self.repository.get_user_by_email(request.email)
         
         # Always return success to prevent email enumeration (even if user doesn't exist)
-        if user and not user.is_deleted:
+        if user and user.deleted_at is None:
             # Generate reset token
             reset_token = generate_token()
             user.token = reset_token
             user.expiry = datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TOKEN_EXPIRY_HOURS)
             await self.repository.update_user(user)
             
-            # TODO: Send email asynchronously via background job queue
-            # This is handled at infrastructure level per API spec
+            # Build reset URL using frontend_url from settings
+            if hasattr(settings, 'frontend_url'):
+                reset_url = f"{settings.frontend_url}/reset-password/{reset_token}"
+            else:
+                reset_url = f"http://localhost:3000/reset-password/{reset_token}"  # Fallback
+            
+            # Send password reset email asynchronously via Celery
+            send_password_reset_email.delay(
+                user_email=user.email,
+                reset_token=str(reset_token),
+                reset_url=reset_url,
+            )
 
         return PasswordResetRequestResponse(
             email=request.email,

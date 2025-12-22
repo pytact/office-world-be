@@ -209,6 +209,17 @@ class UserApiDep:
         """Reactivate user (set is_active=true)."""
         return await self.service.reactivate_user(user_id, reactivator_id, reactivator_company_id=reactivator_company_id, if_match=if_match)
 
+    async def update_user_status(
+        self,
+        user_id: UUID,
+        status_data,
+        updater_id: UUID,
+        updater_company_id: Optional[UUID] = None,
+        if_match: Optional[str] = None,
+    ):
+        """Update user activation status (unified method for activate/deactivate)."""
+        return await self.service.update_user_status(user_id, status_data, updater_id, updater_company_id=updater_company_id, if_match=if_match)
+
     async def resend_invitation(
         self,
         user_id: UUID,

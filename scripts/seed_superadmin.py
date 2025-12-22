@@ -23,8 +23,8 @@ import src.permissions.models  # noqa: F401
 import src.companies.models  # noqa: F401 - Required for UserRoleAssignment.company relationship
 
 # Default superadmin credentials (can be overridden via environment variables)
-DEFAULT_EMAIL = os.getenv("SUPERADMIN_EMAIL", "superadmin@df.com")
-DEFAULT_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "SuperAdmin@123")
+DEFAULT_EMAIL = os.getenv("SUPERADMIN_EMAIL", "superadmin@yopmail.com")
+DEFAULT_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "Test@123")
 
 
 async def check_tables_exist(session: AsyncSession) -> bool:
@@ -168,7 +168,6 @@ async def seed_superadmin() -> None:
                 last_name="Admin",
                 password=hashed_password,
                 is_active=True,
-                is_deleted=False,
                 activate_at=now,
                 invite_at=None,
                 expiry=None,

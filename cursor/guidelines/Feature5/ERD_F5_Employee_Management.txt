@@ -1,0 +1,21 @@
+# ERD: F-005 — Employee Management
+# Project: officeWorld
+# Feature: Employee Management
+
++----------------------+             +----------------------+             +----------------------+
+|       Company        |   1     M   |      Employee        |   1     1   |        User          |
++----------------------+             +----------------------+             +----------------------+
+| id (PK)              |<----------->| id (PK)              |<----------->| id (PK)              |
+|                      |             | company_id (FK)      |             |                      |
+|                      |             | user_id (FK)         |             |                      |
++----------------------+             +----------------------+             +----------------------+
+
+RELATIONSHIPS:
+- Company 1..* Employee: One Company has many Employees
+- User 1..1 Employee: One User has exactly one Employee
+
+NOTES:
+- Employee table includes foreign keys to Company (from F-004) and User (from F-001)
+- Only Primary Key (id) and Foreign Key fields are shown per db_instruction.md rules
+- Business fields and audit fields are excluded from ERD
+

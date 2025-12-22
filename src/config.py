@@ -13,11 +13,12 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/0"
     
-    # Email SMTP
+    # Email SMTP Configuration
     email_sender: str = "shahidm@pytact.com"
     email_app_password: str = "pnkd sowf pghx tiqq"
     email_smtp_host: str = "smtp.gmail.com"
     email_smtp_port: int = 587
+    frontend_url: str = "http://localhost:3000"  # Frontend URL for invitation links
     
     # API
     api_title: str = "FastAPI Boilerplate"

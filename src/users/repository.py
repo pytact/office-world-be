@@ -134,7 +134,7 @@ class UserRepository:
         if company_slug:
             query = query.join(Company, UserRoleAssignment.company_id == Company.id).where(
                 Company.slug == company_slug,
-                Company.deleted_at.is_(None),
+                Company.is_deleted.is_(False),
             )
 
         if role_code:
@@ -313,7 +313,7 @@ class UserRepository:
             select(Company)
             .where(
                 Company.is_active.is_(True),
-                Company.deleted_at.is_(None),
+                Company.is_deleted.is_(False),
             )
             .order_by(Company.name.asc())
         )
@@ -325,7 +325,7 @@ class UserRepository:
             select(Company)
             .where(
                 Company.slug == slug,
-                Company.deleted_at.is_(None),
+                Company.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()
@@ -336,6 +336,17 @@ class UserRepository:
             select(Role)
             .where(
                 func.lower(Role.code) == func.lower(code),
+                Role.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_role_by_id(self, role_id: UUID) -> Optional[Role]:
+        """Get role by ID."""
+        result = await self.session.execute(
+            select(Role)
+            .where(
+                Role.id == role_id,
                 Role.deleted_at.is_(None),
             )
         )
@@ -397,7 +408,7 @@ class UserRepository:
             select(Company)
             .where(
                 Company.id == company_id,
-                Company.deleted_at.is_(None),
+                Company.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()

@@ -17,6 +17,7 @@ from src.users.schemas import (
     UserInvite,
     UserUpdate,
     UserRoleChange,
+    UserStatusUpdate,
     UserCompanyReassign,
     UserRead,
     UserListItem,
@@ -533,14 +534,15 @@ async def reassign_user_company(
 
 
 @router.patch(
-    "/users/{user_id}/deactivate",
+    "/users/{user_id}/status",
     response_model=StandardResponse[UserRead],
-    summary=UserApiDocs.deactivate_user["summary"],
-    description=UserApiDocs.deactivate_user["description"],
+    summary="Update user activation status",
+    description="Unified endpoint for activating and deactivating users. Use status 'ACTIVE' to activate or 'INACTIVE' to deactivate.",
 )
-async def deactivate_user(
+async def update_user_status(
     request: Request,
     user_id: UUID,
+    status_data: UserStatusUpdate,
     api: UserApiDep = Depends(UserApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_company_user),
     role: str = Depends(get_user_role_from_token),
@@ -548,14 +550,16 @@ async def deactivate_user(
     if_match: Optional[str] = Header(None, alias="If-Match"),
     response: Response = None,
 ) -> StandardResponse[UserRead]:
-    """Deactivate user (set is_active=false, blocks authentication).
-    
-    Based on F1B_api_spec.md Section 5.3 - PATCH /api/v1/users/{user_id}/deactivate.
+    """Update user activation status (unified endpoint for activate/deactivate).
     
     Authorization:
-    - SuperAdmin: Can deactivate any user across any company
-    - CEO, HR: Can only deactivate users in their own company
+    - SuperAdmin: Can update any user's status across any company
+    - CEO, HR: Can only update users in their own company
     - Manager, Employee: Access denied (403)
+    
+    Request body:
+    - {"status": "ACTIVE"} - to activate user
+    - {"status": "INACTIVE"} - to deactivate user
     """
     # Generate or use provided X-Request-ID
     request_id = generate_request_id(x_request_id)
@@ -567,79 +571,24 @@ async def deactivate_user(
     # Normalize role to lowercase for comparisons
     role_lower = role.lower() if role else None
 
-    # Authorization: Only SuperAdmin, CEO, HR can deactivate users
+    # Authorization: Only SuperAdmin, CEO, HR can update user status
     if role_lower not in [ROLE_CODE_SUPERADMIN.lower(), ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
-        raise InsufficientPermissions("deactivate users")
+        raise InsufficientPermissions("update user status")
 
-    # CEO and HR can only deactivate users in their own company
-    # (SuperAdmin can deactivate users across any company, so company_id check is skipped for SuperAdmin)
+    # CEO and HR can only update users in their own company
+    # (SuperAdmin can update users across any company, so company_id check is skipped for SuperAdmin)
     if role_lower in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()] and company_id is None:
-        raise InsufficientPermissions("deactivate users outside your company")
+        raise InsufficientPermissions("update user status outside your company")
 
-    result = await api.deactivate_user(user_id, current_user.id, deactivator_company_id=company_id, if_match=if_match)
+    result = await api.update_user_status(user_id, status_data, current_user.id, updater_company_id=company_id, if_match=if_match)
+
+    # Determine success message based on status
+    success_message = SUCCESS_USER_REACTIVATED if status_data.status == "ACTIVE" else SUCCESS_USER_DEACTIVATED
 
     # Set new ETag header after update
     response_data = StandardResponse(
         data=result,
-        message=SUCCESS_USER_DEACTIVATED,
-    )
-    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
-    json_response.headers["X-Request-ID"] = request_id
-    if result.etag:
-        json_response.headers["ETag"] = result.etag
-    return json_response
-
-
-@router.patch(
-    "/users/{user_id}/reactivate",
-    response_model=StandardResponse[UserRead],
-    summary=UserApiDocs.reactivate_user["summary"],
-    description=UserApiDocs.reactivate_user["description"],
-)
-async def reactivate_user(
-    request: Request,
-    user_id: UUID,
-    api: UserApiDep = Depends(UserApiDep),
-    user_company: tuple[User, Optional[UUID]] = Depends(get_current_company_user),
-    role: str = Depends(get_user_role_from_token),
-    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
-    if_match: Optional[str] = Header(None, alias="If-Match"),
-    response: Response = None,
-) -> StandardResponse[UserRead]:
-    """Reactivate user (set is_active=true, restores authentication).
-    
-    Based on F1B_api_spec.md Section 5.4 - PATCH /api/v1/users/{user_id}/reactivate.
-    
-    Authorization:
-    - SuperAdmin: Can reactivate any user across any company
-    - CEO, HR: Can only reactivate users in their own company
-    - Manager, Employee: Access denied (403)
-    """
-    # Generate or use provided X-Request-ID
-    request_id = generate_request_id(x_request_id)
-    if response:
-        response.headers["X-Request-ID"] = request_id
-
-    current_user, company_id = user_company
-
-    # Normalize role to lowercase for comparisons
-    role_lower = role.lower() if role else None
-
-    # Authorization: Only SuperAdmin, CEO, HR can reactivate users
-    if role_lower not in [ROLE_CODE_SUPERADMIN.lower(), ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()]:
-        raise InsufficientPermissions("reactivate users")
-
-    # CEO and HR can only reactivate users in their own company
-    # (SuperAdmin can reactivate users across any company, so company_id check is skipped for SuperAdmin)
-    if role_lower in [ROLE_CODE_CEO.lower(), ROLE_CODE_HR.lower()] and company_id is None:
-        raise InsufficientPermissions("reactivate users outside your company")
-
-    result = await api.reactivate_user(user_id, current_user.id, reactivator_company_id=company_id, if_match=if_match)
-
-    # Set new ETag header after update
-    response_data = StandardResponse(
-        data=result,
-        message=SUCCESS_USER_REACTIVATED,
+        message=success_message,
     )
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id

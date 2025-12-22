@@ -18,6 +18,7 @@ from src.users.schemas import (
     UserInvite,
     UserUpdate,
     UserRoleChange,
+    UserStatusUpdate,
     UserCompanyReassign,
     UserRead,
     UserListItem,
@@ -55,6 +56,7 @@ from src.users.constants import (
     ROLE_CODE_CEO,
 )
 from src.pagination import PagedCollection
+from src.celery_worker import send_invitation_email
 
 
 class UserService:
@@ -401,28 +403,30 @@ class UserService:
         - CEO and HR can only invite to their own company
         """
         # Validate role exists
-        role = await self.repository.get_role_by_code(invite_data.role_code)
+        role = await self.repository.get_role_by_id(invite_data.role_id)
         if not role:
-            raise RoleNotFound(invite_data.role_code)
+            raise RoleNotFound(str(invite_data.role_id))
         
         # Normalize role_code to lowercase for comparisons
-        role_code_lower = invite_data.role_code.lower() if invite_data.role_code else None
+        role_code_lower = role.code.lower() if role.code else None
         
         # Determine company_id based on role and inviter context
         company_id = None
+        company = None  # Store company object for email
         if role_code_lower != ROLE_CODE_SUPERADMIN.lower():
             # Non-SuperAdmin roles require a company
-            if invite_data.company_slug:
-                company = await self.repository.get_company_by_slug(invite_data.company_slug)
+            if invite_data.company_id:
+                company = await self.repository.get_company_by_id(invite_data.company_id)
                 if not company:
-                    raise CompanyNotFound(invite_data.company_slug)
+                    raise CompanyNotFound(str(invite_data.company_id))
                 if not company.is_active:
-                    raise CompanyNotFound(invite_data.company_slug)  # Inactive company treated as not found
+                    raise CompanyNotFound(str(invite_data.company_id))  # Inactive company treated as not found
                 company_id = company.id
             else:
-                # CEO/HR can only invite to their own company (company_slug ignored, use inviter's company)
+                # CEO/HR can only invite to their own company (company_id ignored, use inviter's company)
                 if inviter_company_id:
                     company_id = inviter_company_id
+                    company = await self.repository.get_company_by_id(company_id)
                 else:
                     raise CompanyNotFound("")  # Company required for non-SuperAdmin roles
         
@@ -430,7 +434,7 @@ class UserService:
         if role_code_lower == ROLE_CODE_CEO.lower() and company_id:
             has_ceo = await self.repository.check_company_has_ceo(company_id)
             if has_ceo:
-                company = await self.repository.get_company_by_slug(invite_data.company_slug or "")
+                company = await self.repository.get_company_by_id(company_id)
                 company_name = company.name if company else "Company"
                 raise CompanyHasCEO(company_name)
         
@@ -455,13 +459,15 @@ class UserService:
             invite_at=now,
             activate_at=None,
             expiry=expiry,
-            token=str(uuid4()),  # Generate invitation token
+            token=uuid4(),  # Generate invitation token
             reinvite_count=0,
             last_reinvite_at=None,
             created_by=inviter_id,
         )
         
-        user = await self.repository.create_user(user)
+        # Add user to session and flush to get the ID (but don't commit yet)
+        self.session.add(user)
+        await self.session.flush()  # Flush to get the user ID without committing
         
         # Create role assignment
         assignment = UserRoleAssignment(
@@ -472,7 +478,38 @@ class UserService:
             created_by=inviter_id,
         )
         self.session.add(assignment)
-        await self.session.commit()
+        await self.session.commit()  # Commit both user and assignment together
+        
+        # Get company name for email (if company exists)
+        company_name = "the platform"
+        if company:
+            company_name = company.name
+        elif company_id:
+            # Fallback: fetch company if not already loaded
+            company = await self.repository.get_company_by_id(company_id)
+            if company:
+                company_name = company.name
+        
+        # Format expiry date for email
+        expiry_date_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        # Build activation URL using frontend_url from settings
+        from src.config import settings
+        if hasattr(settings, 'frontend_url'):
+            activation_url = f"{settings.frontend_url}/activate/{user.token}"
+        else:
+            activation_url = f"http://localhost:3000/activate/{user.token}"  # Fallback
+        
+        # Send invitation email asynchronously via Celery
+        send_invitation_email.delay(
+            user_email=user.email,
+            user_name=user.email.split("@")[0],  # Use email prefix as name until activation
+            company_name=company_name,
+            role=role.name if role.name else role.code,
+            activation_token=str(user.token),
+            expiry_date=expiry_date_str,
+            activation_url=activation_url,
+        )
         
         # Refresh user with relationships
         user = await self.repository.get_by_id(user.id)
@@ -676,12 +713,12 @@ class UserService:
                 raise InsufficientPermissions("change user roles outside your company")
 
         # Validate role exists
-        role = await self.repository.get_role_by_code(role_change_data.role_code)
+        role = await self.repository.get_role_by_id(role_change_data.role_id)
         if not role:
-            raise RoleNotFound(role_change_data.role_code)
+            raise RoleNotFound(str(role_change_data.role_id))
 
         # Normalize role_code to lowercase for comparisons
-        role_code_lower = role_change_data.role_code.lower() if role_change_data.role_code else None
+        role_code_lower = role.code.lower() if role.code else None
 
         # CEO Cardinality Rule: Check if assigning CEO role
         if role_code_lower == ROLE_CODE_CEO.lower():
@@ -944,6 +981,67 @@ class UserService:
 
         return user_read
 
+    async def update_user_status(
+        self,
+        user_id: UUID,
+        status_data: UserStatusUpdate,
+        updater_id: UUID,
+        updater_company_id: Optional[UUID] = None,
+        if_match: Optional[str] = None,
+    ) -> UserRead:
+        """Update user activation status (unified method for activate/deactivate).
+        
+        Business Rules:
+        - User must exist
+        - Users cannot deactivate their own account (only applies when status is INACTIVE)
+        - If user is already in the requested status, operation is idempotent (returns success)
+        - If-Match header is REQUIRED for concurrency control
+        - SuperAdmin can update any user's status across any company
+        - CEO and HR can only update users in their own company
+        """
+        user = await self.repository.get_by_id(user_id)
+        if not user:
+            raise UserNotFound(str(user_id))
+
+        # Validate If-Match header (REQUIRED)
+        if not if_match:
+            raise PreconditionRequired()
+
+        # Generate current ETag and validate
+        current_etag = generate_etag(user.updated_at) if user.updated_at else None
+        if current_etag and if_match != current_etag:
+            raise PreconditionFailed()
+
+        # Determine target status
+        target_is_active = status_data.status == "ACTIVE"
+
+        # Check if user is trying to deactivate their own account
+        if not target_is_active and user_id == updater_id:
+            raise CannotDeactivateOwnAccount()
+
+        # Validate CEO/HR can only update users in their own company
+        # (SuperAdmin has updater_company_id=None and can update users across any company)
+        if updater_company_id is not None:  # CEO or HR (not SuperAdmin)
+            active_assignment = self._get_active_role_assignment(user)
+            if active_assignment and active_assignment.company_id != updater_company_id:
+                raise InsufficientPermissions("update user status outside your company")
+
+        # Update user status (idempotent - if already in target status, no change)
+        user.is_active = target_is_active
+        user.updated_by = updater_id
+        await self.repository.update_user(user)
+
+        # Refresh user with relationships
+        user = await self.repository.get_by_id(user.id)
+        user_read = self._build_user_read(user, include_sensitive=True)
+        
+        # Attach ETag for router
+        if user.updated_at:
+            user_read.etag = generate_etag(user.updated_at)
+            user_read.last_modified = user.updated_at
+
+        return user_read
+
     async def resend_invitation(
         self,
         user_id: UUID,
@@ -981,7 +1079,7 @@ class UserService:
         expiry = now + timedelta(seconds=INVITATION_EXPIRY_SECONDS)
 
         # Update invitation fields
-        user.token = str(uuid4())  # Generate new invitation token
+        user.token = uuid4()  # Generate new invitation token
         user.expiry = expiry
         user.reinvite_count = (user.reinvite_count or 0) + 1
         user.last_reinvite_at = now
@@ -995,6 +1093,45 @@ class UserService:
 
         # Refresh user with relationships
         user = await self.repository.get_by_id(user.id)
+        
+        # Get role assignment for email
+        active_assignment = self._get_active_role_assignment(user)
+        role = active_assignment.role if active_assignment and active_assignment.role else None
+        company = active_assignment.company if active_assignment and active_assignment.company else None
+        company_id = active_assignment.company_id if active_assignment else None
+        
+        # Get company name for email
+        company_name = "the platform"
+        if company:
+            company_name = company.name
+        elif company_id:
+            # Fallback: fetch company if not already loaded
+            company = await self.repository.get_company_by_id(company_id)
+            if company:
+                company_name = company.name
+        
+        # Format expiry date for email
+        expiry_date_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        # Build activation URL using frontend_url from settings
+        from src.config import settings
+        if hasattr(settings, 'frontend_url'):
+            activation_url = f"{settings.frontend_url}/activate/{user.token}"
+        else:
+            activation_url = f"http://localhost:3000/activate/{user.token}"  # Fallback
+        
+        # Send invitation email asynchronously via Celery
+        role_name = role.name if role and role.name else (role.code if role else "user")
+        send_invitation_email.delay(
+            user_email=user.email,
+            user_name=user.email.split("@")[0],  # Use email prefix as name until activation
+            company_name=company_name,
+            role=role_name,
+            activation_token=str(user.token),
+            expiry_date=expiry_date_str,
+            activation_url=activation_url,
+        )
+        
         user_read = self._build_user_read(user, include_sensitive=True)
         
         # Attach ETag for router (even though POST doesn't require If-Match, we still provide ETag)

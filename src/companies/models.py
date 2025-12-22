@@ -9,6 +9,9 @@ from src.database import Base
 if TYPE_CHECKING:
     from src.permissions.models import UserRoleAssignment
     from src.employees.models import Employee
+else:
+    # Import at runtime for foreign_keys reference
+    from src.employees.models import Employee
 
 
 class Company(Base):
@@ -127,4 +130,9 @@ class Company(Base):
         "UserRoleAssignment",
         back_populates="company",
         cascade="all, delete-orphan",
+    )
+    employees: Mapped[list["Employee"]] = relationship(
+        "Employee",
+        foreign_keys="Employee.company_id",
+        back_populates="company",
     )

@@ -7,7 +7,7 @@ Response schemas for output structure.
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
 
 # ============================================================================
@@ -56,8 +56,8 @@ class UserInvite(BaseModel):
     """
 
     email: EmailStr = Field(..., description="User email address (RFC 5322 format, max 254 characters)")
-    role_code: str = Field(..., description="Role code for assignment (ceo, hr, manager, employee, superadmin)")
-    company_slug: Optional[str] = Field(None, description="Company slug (required for non-SuperAdmin roles, optional for SuperAdmin)")
+    role_id: UUID = Field(..., description="Role ID for assignment")
+    company_id: Optional[UUID] = Field(None, description="Company ID (required for non-SuperAdmin roles, optional for SuperAdmin)")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -82,9 +82,29 @@ class UserRoleChange(BaseModel):
     Based on F1B_api_spec.md Section 5.1 - PATCH /api/v1/users/{user_id}/role request body.
     """
 
-    role_code: str = Field(..., description="New role code for user (ceo, hr, manager, employee, superadmin)")
+    role_id: UUID = Field(..., description="New role ID for user")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserStatusUpdate(BaseModel):
+    """Request schema for updating user activation status.
+    
+    Unified endpoint for activating and deactivating users.
+    """
+
+    status: str = Field(..., description="User status: 'ACTIVE' or 'INACTIVE'")
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        """Validate status value."""
+        v_upper = v.upper()
+        if v_upper not in ["ACTIVE", "INACTIVE"]:
+            raise ValueError("Status must be 'ACTIVE' or 'INACTIVE'")
+        return v_upper
 
 
 class UserCompanyReassign(BaseModel):
