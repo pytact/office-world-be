@@ -66,8 +66,6 @@ BOB
 
 Rules:
 
-BankInfo is never deleted
-
 Updates affect future payments only
 
 Past salary records remain unchanged

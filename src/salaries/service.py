@@ -6,7 +6,7 @@ Based on F6_api_spec.md - Salary Management (F-006).
 
 from uuid import UUID
 from typing import Optional
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -19,9 +19,12 @@ from src.salaries.schemas import (
     SalaryCreate,
     BankInfoUpsert,
     SalaryPaymentCreate,
+    SalaryPaymentRun,
+    SalaryPaymentUpdate,
     SalaryOverviewQuery,
     SalaryPaymentListQuery,
     SalaryOverviewResponse,
+    SalaryDetailsOnlyResponse,
     SalaryDetailsResponse,
     BankInfoResponse,
     SalaryHistoryResponse,
@@ -33,6 +36,9 @@ from src.salaries.schemas import (
 from src.salaries.models import BankInfo, SalaryDetails, SalaryPayment, SalaryHistory
 from src.salaries.exceptions import (
     EmployeeNotFound,
+    SalaryDetailsNotFound,
+    BankInfoNotFound,
+    SalaryPaymentNotFound,
     OverlappingSalaryPeriod,
     DuplicateSalaryPayment,
     NoActiveSalary,
@@ -40,6 +46,7 @@ from src.salaries.exceptions import (
     PreconditionFailed,
     SalarySlipNotFound,
 )
+from src.exceptions import ConflictError, ValidationError
 from src.salaries.utils import (
     generate_etag,
     format_last_modified,
@@ -51,8 +58,15 @@ from src.salaries.utils import (
 from src.salaries.constants import (
     SUCCESS_SALARY_OVERVIEW_RETRIEVED,
     SUCCESS_SALARY_DETAILS_CREATED,
+    SUCCESS_SALARY_DETAILS_UPDATED,
+    SUCCESS_SALARY_DETAILS_DELETED,
+    SUCCESS_BANK_INFO_RETRIEVED,
+    SUCCESS_BANK_INFO_CREATED,
     SUCCESS_BANK_INFO_UPDATED,
+    SUCCESS_BANK_INFO_DELETED,
     SUCCESS_SALARY_PAYMENT_CREATED,
+    SUCCESS_SALARY_PAYMENT_UPDATED,
+    SUCCESS_SALARY_PAYMENT_DELETED,
     SUCCESS_SALARY_PAYMENTS_RETRIEVED,
 )
 from src.employees.models import Employee
@@ -100,25 +114,25 @@ class SalaryService:
         else:
             return user.email
 
-    async def get_salary_overview(
+    async def get_active_salary(
         self,
         employee_id: UUID,
         company_id: Optional[UUID],
-        query: SalaryOverviewQuery,
         if_none_match: Optional[str] = None,
-    ) -> SalaryOverviewResponse | FastAPIResponse:
-        """Get salary overview for employee with ETag support.
+    ) -> SalaryDetailsResponse | FastAPIResponse:
+        """Get active salary for an employee.
         
-        Based on F6_api_spec.md Section 4.3.1 - GET /v1/company/employees/{employee_id}/salary.
+        Used for:
+        - Payroll
+        - Employee view
+        - Offer confirmation
         
         Business Logic:
         - Validates employee exists and belongs to company
-        - Gets active salary details
-        - Gets bank info
-        - Gets salary history (if requested)
-        - Gets recent payments (if requested)
-        - Generates ETag from latest updated_at
+        - Gets active salary details (effective_to IS NULL)
+        - Generates ETag from updated_at
         - Handles If-None-Match for cache validation
+        - Returns 404 if no active salary exists
         """
         # Get employee
         employee = await self.repository.get_employee_by_id(employee_id, company_id)
@@ -126,146 +140,460 @@ class SalaryService:
             raise EmployeeNotFound(str(employee_id))
         
         # Get active salary details
+        active_salary = await self.repository.get_active_salary_details(employee_id)
+        if not active_salary:
+            raise SalaryDetailsNotFound(str(employee_id))
+        
+        # Generate ETag from updated_at
+        etag = generate_etag(active_salary.updated_at)
+        
+        # Check If-None-Match for cache validation
+        if if_none_match and if_none_match == etag:
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+        
+        # Build response
+        created_by_name = await self._get_user_name(active_salary.created_by)
+        updated_by_name = await self._get_user_name(active_salary.updated_by)
+        
+        response = SalaryDetailsResponse(
+            id=active_salary.id,
+            employee_id=active_salary.employee_id,
+            amount=active_salary.amount,
+            currency=active_salary.currency,
+            payment_frequency=active_salary.payment_frequency,
+            effective_from=active_salary.effective_from,
+            effective_to=active_salary.effective_to,
+            created_at=active_salary.created_at,
+            updated_at=active_salary.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = etag  # Attach for router
+        response._last_modified = active_salary.updated_at
+        return response
+
+    async def get_salary_history(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+    ) -> list[SalaryHistoryResponse]:
+        """Get salary history for an employee.
+        
+        HR / CEO only.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Gets all salary history records for the employee
+        - Returns list of salary history entries
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get active salary to get its history
+        active_salary = await self.repository.get_active_salary_details(employee_id)
+        if not active_salary:
+            # If no active salary, get all salary details and their history
+            all_salaries = await self.repository.get_all_salary_details(employee_id)
+            history_list = []
+            for salary in all_salaries:
+                history_records = await self.repository.get_salary_history_by_salary_details_id(salary.id)
+                for history in history_records:
+                    changed_by_name = await self._get_user_name(history.changed_by)
+                    history_list.append(
+                        SalaryHistoryResponse(
+                            id=history.id,
+                            previous_amount=history.previous_amount,
+                            new_amount=history.new_amount,
+                            effective_from=history.effective_from,
+                            changed_by=changed_by_name,
+                            created_at=history.created_at,
+                        )
+                    )
+            # Sort by created_at descending (newest first)
+            history_list.sort(key=lambda x: x.created_at, reverse=True)
+            return history_list
+        
+        # Get salary history for active salary
+        history_records = await self.repository.get_salary_history_by_salary_details_id(active_salary.id)
+        history_list = []
+        for history in history_records:
+            changed_by_name = await self._get_user_name(history.changed_by)
+            history_list.append(
+                SalaryHistoryResponse(
+                    id=history.id,
+                    previous_amount=history.previous_amount,
+                    new_amount=history.new_amount,
+                    effective_from=history.effective_from,
+                    changed_by=changed_by_name,
+                    created_at=history.created_at,
+                )
+            )
+        
+        # Sort by created_at descending (newest first)
+        history_list.sort(key=lambda x: x.created_at, reverse=True)
+        return history_list
+
+    async def create_salary(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: SalaryCreate,
+        user_id: UUID,
+    ) -> SalaryDetailsResponse:
+        """Create initial salary details.
+        
+        Key Rules:
+        1. Salary is time-based - uses effective_from and effective_to dates
+        2. Only one active salary per employee - enforced by validation
+        3. Past salaries are preserved using effective_to - never hard deleted
+        4. No overlapping periods allowed - validated before creation
+        
+        Validations:
+        - No active salary exists (returns 409 if active salary exists - use revise endpoint instead)
+        - effective_from >= today
+        
+        Creating First Salary:
+        - effective_from = today (or provided date, must be >= today)
+        - effective_to = NULL (active)
+        - This becomes the employee's current salary
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Validation: No active salary exists (must use revise endpoint if active salary exists)
         current_salary = await self.repository.get_active_salary_details(employee_id)
-        
-        # Get bank info
-        bank_info = await self.repository.get_bank_info(employee_id)
-        
-        # Get salary history (if requested)
-        salary_history_list = []
-        if query.include_history and current_salary:
-            history_records = await self.repository.get_salary_history_by_salary_details_id(current_salary.id)
-            for history in history_records:
-                changed_by_name = await self._get_user_name(history.changed_by)
-                salary_history_list.append(
-                    SalaryHistoryResponse(
-                        id=history.id,
-                        previous_amount=history.previous_amount,
-                        new_amount=history.new_amount,
-                        effective_from=history.effective_from,
-                        changed_by=changed_by_name,
-                        created_at=history.created_at,
-                    )
-                )
-        
-        # Get recent payments (if requested)
-        recent_payments_list = []
-        if query.include_payments:
-            payments, _ = await self.repository.list_salary_payments(
-                employee_id=employee_id,
-                page=1,
-                page_size=query.payment_limit,
-                sort_by="paid_on",
-                sort_order="desc",
-            )
-            for payment in payments:
-                created_by_name = await self._get_user_name(payment.created_by)
-                recent_payments_list.append(
-                    SalaryPaymentListItem(
-                        id=payment.id,
-                        employee_id=payment.employee_id,
-                        amount=payment.amount,
-                        currency=payment.currency,
-                        month=payment.month,
-                        year=payment.year,
-                        paid_on=payment.paid_on,
-                        payment_method=payment.payment_method,
-                        slip_url=payment.slip_url,
-                        created_at=payment.created_at,
-                        created_by=created_by_name,
-                    )
-                )
-        
-        # Build employee basic info
-        employee_basic = EmployeeBasicInfo(
-            id=employee.id,
-            first_name=employee.user.first_name or "",
-            last_name=employee.user.last_name or "",
-            is_active=employee.is_active,
-        )
-        
-        # Build current salary response (if exists)
-        current_salary_response = None
         if current_salary:
-            created_by_name = await self._get_user_name(current_salary.created_by)
-            updated_by_name = await self._get_user_name(current_salary.updated_by)
-            current_salary_response = SalaryDetailsResponse(
-                id=current_salary.id,
-                employee_id=current_salary.employee_id,
-                amount=current_salary.amount,
-                currency=current_salary.currency,
-                payment_frequency=current_salary.payment_frequency,
-                effective_from=current_salary.effective_from,
-                effective_to=current_salary.effective_to,
-                created_at=current_salary.created_at,
-                updated_at=current_salary.updated_at,
-                created_by=created_by_name,
-                updated_by=updated_by_name,
+            raise ConflictError(
+                message="Active salary already exists for this employee. Use revise endpoint to update salary.",
+                error_code="ACTIVE_SALARY_EXISTS",
+                details=[{"field": "salary", "issue": "Active salary already exists. Use POST /salary/revise to update salary."}],
             )
         
-        # Build bank info response (if exists, with masking)
-        bank_info_response = None
-        masked_account_number = None
-        if bank_info:
-            created_by_name = await self._get_user_name(bank_info.created_by)
-            updated_by_name = await self._get_user_name(bank_info.updated_by)
-            bank_info_response = BankInfoResponse(
-                id=bank_info.id,
-                employee_id=bank_info.employee_id,
-                bank_name=bank_info.bank_name,
-                branch=bank_info.branch,
-                account_number=mask_account_number(bank_info.account_number),  # Masked
-                ifsc_code=mask_ifsc_code(bank_info.ifsc_code),  # Masked
-                created_at=bank_info.created_at,
-                updated_at=bank_info.updated_at,
-                created_by=created_by_name,
-                updated_by=updated_by_name,
-            )
-            masked_account_number = mask_account_number(bank_info.account_number)
-        
-        # Generate ETag from latest updated_at
-        timestamps = []
-        if current_salary:
-            timestamps.append(current_salary.updated_at)
-        if bank_info:
-            timestamps.append(bank_info.updated_at)
-        latest_updated_at = get_latest_updated_at(*timestamps)
-        
-        if latest_updated_at:
-            etag = generate_etag(latest_updated_at)
-            
-            # Check If-None-Match for cache validation
-            if if_none_match and if_none_match == etag:
-                return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
-            
-            # Attach ETag to response (for router to set header)
-            overview = SalaryOverviewResponse(
-                employee=employee_basic,
-                current_salary=current_salary_response,
-                bank_info=bank_info_response,
-                salary_history=salary_history_list,
-                recent_payments=recent_payments_list,
-                current_salary_amount=current_salary.amount if current_salary else None,
-                current_salary_currency=current_salary.currency if current_salary else None,
-                has_active_salary=current_salary is not None,
-                masked_account_number=masked_account_number,
-            )
-            overview._etag = etag  # Attach for router
-            overview._last_modified = latest_updated_at
-            return overview
-        
-        # No timestamps available (no salary or bank info)
-        return SalaryOverviewResponse(
-            employee=employee_basic,
-            current_salary=current_salary_response,
-            bank_info=bank_info_response,
-            salary_history=salary_history_list,
-            recent_payments=recent_payments_list,
-            current_salary_amount=None,
-            current_salary_currency=None,
-            has_active_salary=False,
-            masked_account_number=masked_account_number,
+        # Validate no overlapping periods (should not happen for initial salary, but check anyway)
+        has_overlap = await self.repository.check_overlapping_salary_period(
+            employee_id=employee_id,
+            effective_from=data.effective_from,
+            effective_to=data.effective_to,
+            exclude_salary_details_ids=None,
         )
+        if has_overlap:
+            raise OverlappingSalaryPeriod()
+        
+        # Create new salary details (first salary - no history entry needed)
+        new_salary = SalaryDetails(
+            employee_id=employee_id,
+            amount=data.amount,
+            currency=data.currency,
+            payment_frequency=data.payment_frequency,
+            effective_from=data.effective_from,
+            effective_to=data.effective_to,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        new_salary = await self.repository.create_salary_details(new_salary)
+        
+        # Build response
+        created_by_name = await self._get_user_name(new_salary.created_by)
+        updated_by_name = await self._get_user_name(new_salary.updated_by)
+        
+        response = SalaryDetailsResponse(
+            id=new_salary.id,
+            employee_id=new_salary.employee_id,
+            amount=new_salary.amount,
+            currency=new_salary.currency,
+            payment_frequency=new_salary.payment_frequency,
+            effective_from=new_salary.effective_from,
+            effective_to=new_salary.effective_to,
+            created_at=new_salary.created_at,
+            updated_at=new_salary.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = generate_etag(new_salary.updated_at)  # Attach for router
+        return response
+
+    async def revise_salary(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: SalaryCreate,
+        user_id: UUID,
+        if_match: Optional[str] = None,
+    ) -> SalaryDetailsResponse:
+        """Revise existing salary (increment/change).
+        
+        Key Rules:
+        1. Salary is time-based - uses effective_from and effective_to dates
+        2. Only one active salary per employee - enforced by closing previous active salary
+        3. Past salaries are preserved using effective_to - never hard deleted
+        4. No overlapping periods allowed - validated before creation
+        5. NEVER update amount in-place - always close old record and create new one
+        
+        Backend Logic:
+        - Fetch active salary
+        - Set effective_to = effective_from - 1 day (yesterday relative to new effective_from)
+        - Insert new salary record with new amount, effective_from = today, effective_to = NULL
+        
+        Why separate endpoint?
+        Because revise ≠ update. This endpoint always creates a new record and closes the old one.
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get current active salary (required for revision)
+        active_salary = await self.repository.get_active_salary_details(employee_id)
+        if not active_salary:
+            raise ValidationError(
+                message="No active salary exists. Use create endpoint to create initial salary.",
+                error_code="NO_ACTIVE_SALARY",
+                details=[{"field": "salary", "issue": "No active salary exists. Use POST /salary to create initial salary."}],
+            )
+        
+        # Validate ETag if provided
+        if if_match:
+            current_etag = generate_etag(active_salary.updated_at)
+            if if_match != current_etag:
+                raise PreconditionFailed()
+        
+        # Store previous amount for history
+        previous_amount = active_salary.amount
+        
+        # Validate no overlapping periods (exclude active salary)
+        has_overlap = await self.repository.check_overlapping_salary_period(
+            employee_id=employee_id,
+            effective_from=data.effective_from,
+            effective_to=data.effective_to,
+            exclude_salary_details_ids=[active_salary.id],
+        )
+        if has_overlap:
+            raise OverlappingSalaryPeriod()
+        
+        # Rule: NEVER update in-place. Always close old record and create new one.
+        # Step 1: Close the active salary record (set effective_to = effective_from - 1 day)
+        # Ensure effective_to >= effective_from (constraint requirement)
+        new_effective_to = data.effective_from - timedelta(days=1)
+        # If the new effective_to would be before the old effective_from, set it to the old effective_from
+        # This handles the case where the new effective_from is the same as or before the old effective_from
+        if new_effective_to < active_salary.effective_from:
+            new_effective_to = active_salary.effective_from
+        
+        active_salary.effective_to = new_effective_to
+        active_salary.updated_by = user_id
+        await self.repository.update_salary_details(active_salary)
+        
+        # Step 2: Create new salary record (never update in-place)
+        new_salary = SalaryDetails(
+            employee_id=employee_id,
+            amount=data.amount,
+            currency=data.currency,
+            payment_frequency=data.payment_frequency,
+            effective_from=data.effective_from,
+            effective_to=data.effective_to,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        new_salary = await self.repository.create_salary_details(new_salary)
+        
+        # Step 3: Create salary history entry
+        history = SalaryHistory(
+            salary_details_id=new_salary.id,
+            previous_amount=previous_amount,
+            new_amount=data.amount,
+            effective_from=data.effective_from,
+            changed_by=user_id,
+        )
+        await self.repository.create_salary_history(history)
+        
+        # Build response (return the new salary record, not the old one)
+        created_by_name = await self._get_user_name(new_salary.created_by)
+        updated_by_name = await self._get_user_name(new_salary.updated_by)
+        
+        response = SalaryDetailsResponse(
+            id=new_salary.id,
+            employee_id=new_salary.employee_id,
+            amount=new_salary.amount,
+            currency=new_salary.currency,
+            payment_frequency=new_salary.payment_frequency,
+            effective_from=new_salary.effective_from,
+            effective_to=new_salary.effective_to,
+            created_at=new_salary.created_at,
+            updated_at=new_salary.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = generate_etag(new_salary.updated_at)  # Attach for router
+        return response
+
+    async def update_salary(
+        self,
+        employee_id: UUID,
+        salary_id: UUID,
+        company_id: Optional[UUID],
+        data: SalaryCreate,
+        user_id: UUID,
+        if_match: Optional[str] = None,
+    ) -> SalaryDetailsResponse:
+        """Update existing salary details by ID.
+        
+        Key Rules:
+        1. Salary is time-based - uses effective_from and effective_to dates
+        2. Only one active salary per employee - enforced by closing previous active salary
+        3. Past salaries are preserved using effective_to - never hard deleted
+        4. No overlapping periods allowed - validated before creation
+        5. NEVER update amount in-place - always close old record and create new one
+        
+        How Salary Changes Should Work:
+        - Find active salary record
+        - Set effective_to = effective_from - 1 day (yesterday relative to new effective_from)
+        - Insert new salary record:
+          - New amount
+          - effective_from = today (or provided date)
+          - effective_to = NULL (active)
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates salary details exists and belongs to employee
+        - Validates ETag if provided (from active salary)
+        - Validates no overlapping salary periods
+        - Closes old salary record (sets effective_to)
+        - Creates new salary record (never updates in-place)
+        - Creates salary history entry
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get salary details to update (the one being replaced)
+        old_salary = await self.repository.get_salary_details_by_id(salary_id)
+        if not old_salary or old_salary.employee_id != employee_id:
+            raise SalaryDetailsNotFound(str(salary_id))
+        
+        # Get current active salary (should be the same as old_salary if updating active salary)
+        current_active_salary = await self.repository.get_active_salary_details(employee_id)
+        
+        # If updating the active salary, validate ETag
+        if current_active_salary and current_active_salary.id == salary_id:
+            if if_match:
+                current_etag = generate_etag(current_active_salary.updated_at)
+                if if_match != current_etag:
+                    raise PreconditionFailed()
+            # Store previous amount for history
+            previous_amount = old_salary.amount
+        else:
+            # If updating a historical salary, we still need previous_amount
+            previous_amount = old_salary.amount
+        
+        # Collect salaries to exclude from overlap check
+        exclude_ids = [salary_id]
+        if current_active_salary and current_active_salary.id != salary_id:
+            exclude_ids.append(current_active_salary.id)
+        
+        # Validate no overlapping periods
+        has_overlap = await self.repository.check_overlapping_salary_period(
+            employee_id=employee_id,
+            effective_from=data.effective_from,
+            effective_to=data.effective_to,
+            exclude_salary_details_ids=exclude_ids,
+        )
+        if has_overlap:
+            raise OverlappingSalaryPeriod()
+        
+        # Rule: NEVER update in-place. Always close old record and create new one.
+        # Step 1: Close the old salary record (set effective_to = effective_from - 1 day)
+        if old_salary.effective_to is None:
+            # If it's an active salary, close it
+            old_salary.effective_to = data.effective_from - timedelta(days=1)
+            old_salary.updated_by = user_id
+            await self.repository.update_salary_details(old_salary)
+        elif old_salary.effective_from == data.effective_from:
+            # If updating a salary that starts on the same date, allow same date for effective_to
+            old_salary.effective_to = data.effective_from
+            old_salary.updated_by = user_id
+            await self.repository.update_salary_details(old_salary)
+        
+        # Step 2: Close any other active salary that might overlap
+        if current_active_salary and current_active_salary.id != salary_id:
+            if current_active_salary.effective_to is None or current_active_salary.effective_to >= data.effective_from:
+                current_active_salary.effective_to = data.effective_from - timedelta(days=1)
+                current_active_salary.updated_by = user_id
+                await self.repository.update_salary_details(current_active_salary)
+        
+        # Step 3: Create new salary record (never update in-place)
+        new_salary = SalaryDetails(
+            employee_id=employee_id,
+            amount=data.amount,
+            currency=data.currency,
+            payment_frequency=data.payment_frequency,
+            effective_from=data.effective_from,
+            effective_to=data.effective_to,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        new_salary = await self.repository.create_salary_details(new_salary)
+        
+        # Step 4: Create salary history entry
+        history = SalaryHistory(
+            salary_details_id=new_salary.id,
+            previous_amount=previous_amount,
+            new_amount=data.amount,
+            effective_from=data.effective_from,
+            changed_by=user_id,
+        )
+        await self.repository.create_salary_history(history)
+        
+        # Build response (return the new salary record, not the old one)
+        created_by_name = await self._get_user_name(new_salary.created_by)
+        updated_by_name = await self._get_user_name(new_salary.updated_by)
+        
+        response = SalaryDetailsResponse(
+            id=new_salary.id,
+            employee_id=new_salary.employee_id,
+            amount=new_salary.amount,
+            currency=new_salary.currency,
+            payment_frequency=new_salary.payment_frequency,
+            effective_from=new_salary.effective_from,
+            effective_to=new_salary.effective_to,
+            created_at=new_salary.created_at,
+            updated_at=new_salary.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = generate_etag(new_salary.updated_at)  # Attach for router
+        return response
+
+    async def delete_salary(
+        self,
+        employee_id: UUID,
+        salary_id: UUID,
+        company_id: Optional[UUID],
+        user_id: UUID,
+    ) -> None:
+        """Soft delete salary details by ID.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates salary details exists and belongs to employee
+        - Soft deletes salary details (sets deleted_at and deleted_by)
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get salary details to delete
+        salary_to_delete = await self.repository.get_salary_details_by_id(salary_id)
+        if not salary_to_delete or salary_to_delete.employee_id != employee_id:
+            raise SalaryDetailsNotFound(str(salary_id))
+        
+        # Soft delete
+        await self.repository.soft_delete_salary_details(salary_to_delete, user_id)
 
     async def create_or_update_salary(
         self,
@@ -296,33 +624,64 @@ class SalaryService:
         # Get current active salary
         current_salary = await self.repository.get_active_salary_details(employee_id)
         
-        # If updating existing salary, validate ETag
-        if current_salary:
+        # Check if there's a salary that starts on the same date (for replacement)
+        existing_salary_same_date = await self.repository.get_salary_by_effective_from(
+            employee_id, data.effective_from
+        )
+        
+        # Priority: If there's a salary with same effective_from, replace that one (regardless of active status)
+        # Otherwise, replace active salary if it exists
+        salary_to_replace = existing_salary_same_date if existing_salary_same_date else current_salary
+        
+        # If updating existing salary (active or same start date), validate ETag
+        if salary_to_replace:
             if not if_match:
                 raise PreconditionRequired()
             
-            current_etag = generate_etag(current_salary.updated_at)
+            current_etag = generate_etag(salary_to_replace.updated_at)
             if if_match != current_etag:
                 raise PreconditionFailed()
         
-        # Validate no overlapping periods
+        # Collect all salaries to exclude from overlap check
+        exclude_ids = []
+        if salary_to_replace:
+            exclude_ids.append(salary_to_replace.id)
+        # Also exclude current_salary if it's different from salary_to_replace
+        if current_salary and current_salary.id != (salary_to_replace.id if salary_to_replace else None):
+            exclude_ids.append(current_salary.id)
+        
+        # Validate no overlapping periods (exclude salaries being replaced)
         has_overlap = await self.repository.check_overlapping_salary_period(
             employee_id=employee_id,
             effective_from=data.effective_from,
             effective_to=data.effective_to,
-            exclude_salary_details_id=current_salary.id if current_salary else None,
+            exclude_salary_details_ids=exclude_ids if exclude_ids else None,
         )
         if has_overlap:
             raise OverlappingSalaryPeriod()
         
-        # Close previous active salary (if exists)
+        # Close previous salaries (if exists)
         previous_amount = None
-        if current_salary:
-            previous_amount = current_salary.amount
-            # Set effective_to to effective_from - 1 day
-            current_salary.effective_to = data.effective_from - timedelta(days=1)
-            current_salary.updated_by = user_id
-            await self.repository.update_salary_details(current_salary)
+        if salary_to_replace:
+            previous_amount = salary_to_replace.amount
+            # If it's an active salary, close it by setting effective_to to effective_from - 1 day
+            if salary_to_replace.effective_to is None:
+                salary_to_replace.effective_to = data.effective_from - timedelta(days=1)
+                salary_to_replace.updated_by = user_id
+                await self.repository.update_salary_details(salary_to_replace)
+            # If it starts on same date, set effective_to to the same date (allowed by constraint: effective_to >= effective_from)
+            elif salary_to_replace.effective_from == data.effective_from:
+                salary_to_replace.effective_to = data.effective_from
+                salary_to_replace.updated_by = user_id
+                await self.repository.update_salary_details(salary_to_replace)
+        
+        # Also close current_salary if it's different from salary_to_replace and would overlap
+        if current_salary and current_salary.id != (salary_to_replace.id if salary_to_replace else None):
+            # Only close if it would overlap with the new salary period
+            if current_salary.effective_to is None or current_salary.effective_to >= data.effective_from:
+                current_salary.effective_to = data.effective_from - timedelta(days=1)
+                current_salary.updated_by = user_id
+                await self.repository.update_salary_details(current_salary)
         
         # Create new salary details
         new_salary = SalaryDetails(
@@ -338,7 +697,7 @@ class SalaryService:
         new_salary = await self.repository.create_salary_details(new_salary)
         
         # Create salary history entry (if previous salary existed)
-        if current_salary:
+        if salary_to_replace:
             history = SalaryHistory(
                 salary_details_id=new_salary.id,
                 previous_amount=previous_amount,
@@ -367,6 +726,226 @@ class SalaryService:
         )
         response._etag = generate_etag(new_salary.updated_at)  # Attach for router
         return response
+
+    async def get_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        if_none_match: Optional[str] = None,
+    ) -> BankInfoResponse | FastAPIResponse:
+        """Get bank information for an employee with ETag support.
+        
+        Based on F6_api_spec.md - GET /v1/company/employees/{employee_id}/salary/bank-info.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Gets bank info for employee
+        - Returns 404 if bank info not found
+        - Supports ETag-based caching with If-None-Match header
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get bank info
+        bank_info = await self.repository.get_bank_info(employee_id)
+        if not bank_info:
+            raise BankInfoNotFound(str(employee_id))
+        
+        # Check If-None-Match header for 304 Not Modified
+        if if_none_match:
+            current_etag = generate_etag(bank_info.updated_at)
+            if if_none_match == current_etag:
+                # Return 304 Not Modified
+                response = FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+                response.headers["ETag"] = current_etag
+                response.headers["Last-Modified"] = format_last_modified(bank_info.updated_at)
+                return response
+        
+        # Build response (with masking)
+        created_by_name = await self._get_user_name(bank_info.created_by)
+        updated_by_name = await self._get_user_name(bank_info.updated_by)
+        
+        response = BankInfoResponse(
+            id=bank_info.id,
+            employee_id=bank_info.employee_id,
+            bank_name=bank_info.bank_name,
+            branch=bank_info.branch,
+            account_number=mask_account_number(bank_info.account_number),  # Masked
+            ifsc_code=mask_ifsc_code(bank_info.ifsc_code),  # Masked
+            created_at=bank_info.created_at,
+            updated_at=bank_info.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = generate_etag(bank_info.updated_at)  # Attach for router
+        response._last_modified = bank_info.updated_at
+        return response
+
+    async def create_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: BankInfoUpsert,
+        user_id: UUID,
+    ) -> BankInfoResponse:
+        """Create new bank information.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates no existing active bank info for employee (Rule: One bank account per employee, active at a time)
+        - Creates new bank info
+        - Bank info is used only for future payments (past payments remain unchanged)
+        
+        Key Rules:
+        1. One bank account per employee (active at a time) - enforced by checking existing active bank info
+        2. Never hard deleted (only soft delete) - enforced by repository soft_delete_bank_info method
+        3. Used only for future payments - bank info updates don't affect past payments
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Rule 1: One bank account per employee (active at a time)
+        # Check if active bank info already exists (filters by deleted_at IS NULL)
+        existing_bank_info = await self.repository.get_bank_info(employee_id)
+        if existing_bank_info:
+            raise ConflictError(
+                message="Bank information already exists for this employee.",
+                error_code="BANK_INFO_ALREADY_EXISTS",
+                details=[{"field": "bank_info", "issue": "Bank information already exists for this employee. Use update endpoint instead."}],
+            )
+        
+        # Create new bank info
+        new_bank_info = BankInfo(
+            employee_id=employee_id,
+            bank_name=data.bank_name,
+            branch=data.branch,
+            account_number=data.account_number,
+            ifsc_code=data.ifsc_code,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        bank_info = await self.repository.create_bank_info(new_bank_info)
+        
+        # Build response (with masking)
+        created_by_name = await self._get_user_name(bank_info.created_by)
+        updated_by_name = await self._get_user_name(bank_info.updated_by)
+        
+        response = BankInfoResponse(
+            id=bank_info.id,
+            employee_id=bank_info.employee_id,
+            bank_name=bank_info.bank_name,
+            branch=bank_info.branch,
+            account_number=mask_account_number(bank_info.account_number),  # Masked
+            ifsc_code=mask_ifsc_code(bank_info.ifsc_code),  # Masked
+            created_at=bank_info.created_at,
+            updated_at=bank_info.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = generate_etag(bank_info.updated_at)  # Attach for router
+        return response
+
+    async def update_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: BankInfoUpsert,
+        user_id: UUID,
+        if_match: Optional[str] = None,
+    ) -> BankInfoResponse:
+        """Update existing bank information.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates bank info exists and belongs to employee
+        - Validates ETag if provided
+        - Updates bank info
+        
+        Key Rules:
+        1. One bank account per employee (active at a time) - enforced by repository get_bank_info (filters deleted_at IS NULL)
+        2. Never hard deleted (only soft delete) - enforced by repository update_bank_info (no hard delete)
+        3. Used only for future payments - updates don't affect past payments (past payments use bank info at payment time)
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get bank info to update (by employee_id since only one per employee)
+        bank_info_to_update = await self.repository.get_bank_info(employee_id)
+        if not bank_info_to_update:
+            raise BankInfoNotFound(str(employee_id))
+        
+        # Validate ETag if provided
+        if if_match:
+            current_etag = generate_etag(bank_info_to_update.updated_at)
+            if if_match != current_etag:
+                raise PreconditionFailed()
+        
+        # Update bank info
+        bank_info_to_update.bank_name = data.bank_name
+        bank_info_to_update.branch = data.branch
+        bank_info_to_update.account_number = data.account_number
+        bank_info_to_update.ifsc_code = data.ifsc_code
+        bank_info_to_update.updated_by = user_id
+        
+        updated_bank_info = await self.repository.update_bank_info(bank_info_to_update)
+        
+        # Build response (with masking)
+        created_by_name = await self._get_user_name(updated_bank_info.created_by)
+        updated_by_name = await self._get_user_name(updated_bank_info.updated_by)
+        
+        response = BankInfoResponse(
+            id=updated_bank_info.id,
+            employee_id=updated_bank_info.employee_id,
+            bank_name=updated_bank_info.bank_name,
+            branch=updated_bank_info.branch,
+            account_number=mask_account_number(updated_bank_info.account_number),  # Masked
+            ifsc_code=mask_ifsc_code(updated_bank_info.ifsc_code),  # Masked
+            created_at=updated_bank_info.created_at,
+            updated_at=updated_bank_info.updated_at,
+            created_by=created_by_name,
+            updated_by=updated_by_name,
+        )
+        response._etag = generate_etag(updated_bank_info.updated_at)  # Attach for router
+        return response
+
+    async def delete_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        user_id: UUID,
+    ) -> None:
+        """Soft delete bank information.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates bank info exists and belongs to employee
+        - Soft deletes bank info (sets deleted_at and deleted_by)
+        
+        Key Rules:
+        1. One bank account per employee (active at a time) - enforced by repository get_bank_info (filters deleted_at IS NULL)
+        2. Never hard deleted (only soft delete) - enforced by repository soft_delete_bank_info (sets deleted_at, never removes record)
+        3. Used only for future payments - soft deletion doesn't affect past payments (past payments remain unchanged)
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Rule 1: One bank account per employee (active at a time)
+        # Get active bank info to delete (by employee_id, filters by deleted_at IS NULL)
+        bank_info_to_delete = await self.repository.get_bank_info(employee_id)
+        if not bank_info_to_delete:
+            raise BankInfoNotFound(str(employee_id))
+        
+        # Rule 2: Never hard deleted (only soft delete)
+        # Soft delete sets deleted_at and deleted_by, preserves record for audit
+        await self.repository.soft_delete_bank_info(bank_info_to_delete, user_id)
 
     async def upsert_bank_info(
         self,
@@ -444,6 +1023,101 @@ class SalaryService:
         response._etag = generate_etag(bank_info.updated_at)  # Attach for router
         return response
 
+    async def run_salary_payment(
+        self,
+        data: SalaryPaymentRun,
+        company_id: Optional[UUID],
+        user_id: UUID,
+    ) -> SalaryPaymentResponse:
+        """Execute salary payment.
+        
+        Used by HR and automated payroll jobs.
+        
+        Backend Logic:
+        1. Check payment not already done
+        2. Fetch active salary_details
+        3. Fetch active bank_info
+        4. Insert salary_payment
+        5. Trigger async slip generation
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates no duplicate payment for same month/year
+        - Gets active salary for payment month
+        - Gets active bank info for payment
+        - Creates salary payment record with paid_on = now
+        - Returns payment with derived fields
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(data.employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(data.employee_id))
+        
+        # Check for duplicate payment
+        is_duplicate = await self.repository.check_duplicate_payment(
+            employee_id=data.employee_id,
+            month=data.month,
+            year=data.year,
+        )
+        if is_duplicate:
+            raise DuplicateSalaryPayment(data.month, data.year)
+        
+        # Fetch active salary_details
+        active_salary = await self.repository.get_active_salary_for_payment_month(
+            employee_id=data.employee_id,
+            month=data.month,
+            year=data.year,
+        )
+        if not active_salary:
+            raise NoActiveSalary()
+        
+        # Fetch active bank_info (required for payment execution)
+        active_bank_info = await self.repository.get_bank_info(data.employee_id)
+        if not active_bank_info:
+            raise BankInfoNotFound(str(data.employee_id))
+        
+        # Insert salary_payment with paid_on = now
+        payment = SalaryPayment(
+            employee_id=data.employee_id,
+            amount=active_salary.amount,
+            currency=active_salary.currency,
+            month=data.month,
+            year=data.year,
+            paid_on=datetime.utcnow(),  # Set paid_on to current time
+            payment_method=data.payment_method,
+            slip_url=None,  # Will be set by async slip generation
+            created_by=user_id,
+        )
+        payment = await self.repository.create_salary_payment(payment)
+        
+        # TODO: Trigger async slip generation (background task)
+        # This should be implemented as a background task that:
+        # 1. Generates the salary slip PDF
+        # 2. Uploads it to storage
+        # 3. Updates payment.slip_url
+        # 4. Emails the slip to the employee
+        
+        # Build response with derived fields
+        created_by_name = await self._get_user_name(payment.created_by)
+        slip_url = f"/v1/company/employees/{data.employee_id}/salary/payments/{payment.id}/slip" if payment.slip_url else None
+        
+        response = SalaryPaymentResponse(
+            id=payment.id,
+            employee_id=payment.employee_id,
+            amount=payment.amount,
+            currency=payment.currency,
+            month=payment.month,
+            year=payment.year,
+            paid_on=payment.paid_on,
+            payment_method=payment.payment_method,
+            slip_url=slip_url,
+            payable_amount=payment.amount,  # Derived field
+            payment_period_label=generate_payment_period_label(payment.month, payment.year),  # Derived field
+            created_at=payment.created_at,
+            created_by=created_by_name,
+        )
+        return response
+
     async def create_salary_payment(
         self,
         employee_id: UUID,
@@ -461,6 +1135,11 @@ class SalaryService:
         - Gets active salary for payment month
         - Creates salary payment record
         - Returns payment with derived fields
+        
+        Bank Info Rule:
+        - Bank info is used only for future payments - payment uses active bank info at payment time
+        - Updates to bank info after payment creation don't affect this payment
+        - Past payments remain unchanged even if bank info is updated or deleted
         """
         # Get employee
         employee = await self.repository.get_employee_by_id(employee_id, company_id)
@@ -519,6 +1198,73 @@ class SalaryService:
             created_by=created_by_name,
         )
         return response
+
+    async def list_salary_payments_by_month_year(
+        self,
+        company_id: Optional[UUID],
+        month: int,
+        year: int,
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "paid_on",
+        sort_order: str = "desc",
+    ) -> SalaryPaymentPaginatedResponse:
+        """List salary payments by month/year across company.
+        
+        Used for:
+        - Payroll reports
+        - Compliance
+        - Finance reconciliation
+        
+        Business Logic:
+        - Gets all salary payments for the specified month/year
+        - Filters by company_id if provided
+        - Returns paginated results
+        """
+        items, total = await self.repository.list_salary_payments_by_month_year(
+            company_id=company_id,
+            month=month,
+            year=year,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        
+        # Convert to response schemas
+        payment_items = []
+        for payment in items:
+            created_by_name = await self._get_user_name(payment.created_by)
+            slip_url = f"/v1/company/employees/{payment.employee_id}/salary/payments/{payment.id}/slip" if payment.slip_url else None
+            
+            payment_items.append(
+                SalaryPaymentListItem(
+                    id=payment.id,
+                    employee_id=payment.employee_id,
+                    amount=payment.amount,
+                    currency=payment.currency,
+                    month=payment.month,
+                    year=payment.year,
+                    paid_on=payment.paid_on,
+                    payment_method=payment.payment_method,
+                    slip_url=slip_url,
+                    payable_amount=payment.amount,  # Derived field
+                    payment_period_label=generate_payment_period_label(payment.month, payment.year),  # Derived field
+                    created_at=payment.created_at,
+                    created_by=created_by_name,
+                )
+            )
+        
+        # Build pagination metadata
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        
+        return SalaryPaymentPaginatedResponse(
+            items=payment_items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
 
     async def list_salary_payments(
         self,
@@ -609,6 +1355,85 @@ class SalaryService:
             next_page=next_page,
             prev_page=prev_page,
         )
+
+    async def update_salary_payment(
+        self,
+        employee_id: UUID,
+        payment_id: UUID,
+        company_id: Optional[UUID],
+        data: SalaryPaymentUpdate,
+        user_id: UUID,
+    ) -> SalaryPaymentResponse:
+        """Update existing salary payment by ID.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates payment exists and belongs to employee
+        - Updates only payment_method and paid_on (amount, currency, month, year are immutable)
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get payment to update
+        payment_to_update = await self.repository.get_salary_payment_by_id(payment_id)
+        if not payment_to_update or payment_to_update.employee_id != employee_id:
+            raise SalaryPaymentNotFound(str(payment_id))
+        
+        # Update only mutable fields
+        payment_to_update.payment_method = data.payment_method
+        payment_to_update.paid_on = data.paid_on
+        
+        updated_payment = await self.repository.update_salary_payment(payment_to_update)
+        
+        # Build response with derived fields
+        created_by_name = await self._get_user_name(updated_payment.created_by)
+        slip_url = f"/v1/company/employees/{employee_id}/salary/payments/{updated_payment.id}/slip" if updated_payment.slip_url else None
+        
+        response = SalaryPaymentResponse(
+            id=updated_payment.id,
+            employee_id=updated_payment.employee_id,
+            amount=updated_payment.amount,
+            currency=updated_payment.currency,
+            month=updated_payment.month,
+            year=updated_payment.year,
+            paid_on=updated_payment.paid_on,
+            payment_method=updated_payment.payment_method,
+            slip_url=slip_url,
+            payable_amount=updated_payment.amount,  # Derived field
+            payment_period_label=generate_payment_period_label(updated_payment.month, updated_payment.year),  # Derived field
+            created_at=updated_payment.created_at,
+            created_by=created_by_name,
+        )
+        return response
+
+    async def delete_salary_payment(
+        self,
+        employee_id: UUID,
+        payment_id: UUID,
+        company_id: Optional[UUID],
+        user_id: UUID,
+    ) -> None:
+        """Soft delete salary payment by ID.
+        
+        Business Logic:
+        - Validates employee exists and belongs to company
+        - Validates payment exists and belongs to employee
+        - Soft deletes payment (sets deleted_at and deleted_by)
+        """
+        # Get employee
+        employee = await self.repository.get_employee_by_id(employee_id, company_id)
+        if not employee:
+            raise EmployeeNotFound(str(employee_id))
+        
+        # Get payment to delete
+        payment_to_delete = await self.repository.get_salary_payment_by_id(payment_id)
+        if not payment_to_delete or payment_to_delete.employee_id != employee_id:
+            raise SalaryPaymentNotFound(str(payment_id))
+        
+        # Soft delete
+        await self.repository.soft_delete_salary_payment(payment_to_delete, user_id)
 
     async def get_salary_slip(
         self,

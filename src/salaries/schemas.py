@@ -61,9 +61,9 @@ class SalaryCreate(BaseModel):
         ...,
         description="Start date of salary configuration (inclusive), must be today or future date",
     )
-    effective_to: date = Field(
-        ...,
-        description="End date of salary configuration (inclusive), must be >= effective_from",
+    effective_to: Optional[date] = Field(
+        None,
+        description="End date of salary configuration (inclusive), must be >= effective_from. NULL for active/ongoing salary.",
     )
     
     @field_validator("effective_from")
@@ -73,16 +73,24 @@ class SalaryCreate(BaseModel):
         
         Based on F6_api_spec.md Section 4.3.2 - effective_from must be today or future date.
         """
-        from datetime import date as date_today
-        if v < date_today():
+        if v < date.today():
             raise ValueError("Effective from date must be today or future date.")
+        return v
+    
+    @field_validator("effective_to", mode="before")
+    @classmethod
+    def validate_effective_to_before(cls, v) -> Optional[date]:
+        """Handle empty string by converting to None for active salary."""
+        # Handle empty string - convert to None for active salary
+        if v == "" or v is None:
+            return None
         return v
     
     @field_validator("effective_to")
     @classmethod
-    def validate_effective_to(cls, v: date, info) -> date:
-        """Validate effective_to >= effective_from."""
-        if "effective_from" in info.data and v < info.data["effective_from"]:
+    def validate_effective_to(cls, v: Optional[date], info) -> Optional[date]:
+        """Validate effective_to >= effective_from (if provided)."""
+        if v is not None and "effective_from" in info.data and v < info.data["effective_from"]:
             raise ValueError("Effective to date must be greater than or equal to effective from date (inclusive dates allowed).")
         return v
     
@@ -121,8 +129,39 @@ class BankInfoUpsert(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SalaryPaymentRun(BaseModel):
+    """Request schema for executing salary payment.
+    
+    Used by HR and automated payroll jobs.
+    """
+    
+    employee_id: UUID = Field(
+        ...,
+        description="Employee UUID",
+    )
+    month: int = Field(
+        ...,
+        description="Salary month",
+        ge=1,
+        le=12,
+    )
+    year: int = Field(
+        ...,
+        description="Salary year",
+        ge=2000,
+        le=9999,
+    )
+    payment_method: str = Field(
+        ...,
+        description="Mode of payment",
+        pattern="^(BANK_TRANSFER|UPI|CHEQUE|CASH)$",
+    )
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SalaryPaymentCreate(BaseModel):
-    """Request schema for creating salary payment."""
+    """Request schema for creating salary payment (legacy - kept for backward compatibility)."""
     
     month: int = Field(
         ...,
@@ -136,6 +175,26 @@ class SalaryPaymentCreate(BaseModel):
         ge=2000,
         le=9999,
     )
+    payment_method: str = Field(
+        ...,
+        description="Mode of payment",
+        pattern="^(BANK_TRANSFER|UPI|CHEQUE|CASH)$",
+    )
+    paid_on: datetime = Field(
+        ...,
+        description="Payment execution date (UTC)",
+    )
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SalaryPaymentUpdate(BaseModel):
+    """Request schema for updating salary payment.
+    
+    Only payment_method and paid_on can be updated.
+    Amount, currency, month, and year are immutable.
+    """
+    
     payment_method: str = Field(
         ...,
         description="Mode of payment",
@@ -270,6 +329,15 @@ class SalaryPaymentListItem(BaseModel):
     slip_url: Optional[str] = None
     created_at: datetime
     created_by: Optional[str] = None  # User name
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SalaryDetailsOnlyResponse(BaseModel):
+    """Response schema for salary details only (no extra info)."""
+    
+    current_salary: Optional[SalaryDetailsResponse] = None
+    salary_history: list[SalaryHistoryResponse] = []
     
     model_config = ConfigDict(from_attributes=True)
 

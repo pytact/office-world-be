@@ -133,37 +133,95 @@ class SalaryRepository:
         )
         return list(result.scalars().all())
 
+    async def get_salary_by_effective_from(
+        self, employee_id: UUID, effective_from: date
+    ) -> Optional[SalaryDetails]:
+        """Get salary details that starts on a specific date.
+        
+        Used to find existing salary that starts on the same date as new salary (for replacement).
+        """
+        result = await self.session.execute(
+            select(SalaryDetails)
+            .options(
+                selectinload(SalaryDetails.employee),
+                selectinload(SalaryDetails.salary_history),
+            )
+            .where(
+                SalaryDetails.employee_id == employee_id,
+                SalaryDetails.effective_from == effective_from,
+                SalaryDetails.deleted_at.is_(None),
+            )
+            .order_by(desc(SalaryDetails.created_at))  # Get most recent if multiple
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def check_overlapping_salary_period(
         self,
         employee_id: UUID,
         effective_from: date,
-        effective_to: date,
+        effective_to: Optional[date],
         exclude_salary_details_id: Optional[UUID] = None,
+        exclude_salary_details_ids: Optional[list[UUID]] = None,
     ) -> bool:
         """Check if salary period overlaps with existing SalaryDetails.
         
         Returns True if overlap exists, False otherwise.
-        Excludes soft-deleted records and optionally excludes a specific salary_details_id.
+        Excludes soft-deleted records and optionally excludes specific salary_details_id(s).
+        
+        Handles None effective_to (active salary) by checking if new period overlaps with any existing period.
         """
-        # Check for overlapping periods:
-        # - New period starts before existing period ends AND new period ends after existing period starts
-        query = (
-            select(func.count())
-            .select_from(SalaryDetails)
-            .where(
-                SalaryDetails.employee_id == employee_id,
-                SalaryDetails.deleted_at.is_(None),
-                # Overlap condition: new_from < existing_to AND new_to > existing_from
-                SalaryDetails.effective_from <= effective_to,
+        # Build overlap conditions
+        # For new period to overlap with existing period:
+        # - New period starts before existing period ends (or existing is active)
+        # - New period ends after existing period starts (or new is active)
+        
+        overlap_conditions = [
+            SalaryDetails.employee_id == employee_id,
+            SalaryDetails.deleted_at.is_(None),
+        ]
+        
+        # If new period has an end date (effective_to is not None)
+        if effective_to is not None:
+            # New period overlaps if:
+            # - Existing period starts before new period ends AND
+            #   (Existing period ends after new period starts OR existing period is active)
+            overlap_conditions.append(
+                SalaryDetails.effective_from <= effective_to
+            )
+            overlap_conditions.append(
                 or_(
                     SalaryDetails.effective_to >= effective_from,
                     SalaryDetails.effective_to.is_(None),  # Active record (effective_to IS NULL)
-                ),
+                )
             )
+        else:
+            # New period is active (no end date) - overlaps if existing period hasn't ended yet
+            # or if existing period ends after new period starts
+            overlap_conditions.append(
+                or_(
+                    SalaryDetails.effective_to >= effective_from,
+                    SalaryDetails.effective_to.is_(None),  # Both are active
+                )
+            )
+        
+        query = (
+            select(func.count())
+            .select_from(SalaryDetails)
+            .where(and_(*overlap_conditions))
         )
         
+        # Exclude IDs from overlap check
+        exclude_ids = []
         if exclude_salary_details_id is not None:
-            query = query.where(SalaryDetails.id != exclude_salary_details_id)
+            exclude_ids.append(exclude_salary_details_id)
+        if exclude_salary_details_ids:
+            exclude_ids.extend(exclude_salary_details_ids)
+        
+        if exclude_ids:
+            # Remove duplicates while preserving order
+            exclude_ids = list(dict.fromkeys(exclude_ids))
+            query = query.where(SalaryDetails.id.notin_(exclude_ids))
         
         result = await self.session.execute(query)
         count = result.scalar() or 0
@@ -198,14 +256,18 @@ class SalaryRepository:
     async def get_bank_info(
         self, employee_id: UUID
     ) -> Optional[BankInfo]:
-        """Get bank info for employee.
+        """Get active bank info for employee.
+        
+        Key Rules Enforced:
+        - Only returns active bank info (deleted_at IS NULL)
+        - One bank account per employee (active at a time) - enforced by query filter
         
         Eager loads:
         - employee (Employee)
         
         Filters:
         - employee_id
-        - deleted_at IS NULL (not soft-deleted)
+        - deleted_at IS NULL (not soft-deleted) - ensures only active bank info is returned
         """
         result = await self.session.execute(
             select(BankInfo)
@@ -356,6 +418,80 @@ class SalaryRepository:
 
         return items, total
 
+    async def list_salary_payments_by_month_year(
+        self,
+        company_id: Optional[UUID],
+        month: int,
+        year: int,
+        page: int,
+        page_size: int,
+        sort_by: str = "paid_on",
+        sort_order: str = "desc",
+    ) -> tuple[list[SalaryPayment], int]:
+        """List salary payments by month/year across company.
+        
+        Used for:
+        - Payroll reports
+        - Compliance
+        - Finance reconciliation
+        
+        Eager loads:
+        - employee (Employee)
+        
+        Filters:
+        - month
+        - year
+        - deleted_at IS NULL (not soft-deleted)
+        - Optional: company_id filter (if provided, filters by employee.company_id)
+        
+        Sorting:
+        - sort_by: paid_on, month, year, amount, created_at
+        - sort_order: asc, desc
+        """
+        # Build base query with required filters and eager loading
+        query = (
+            select(SalaryPayment)
+            .options(selectinload(SalaryPayment.employee))  # CRITICAL: Eager load employee
+            .join(Employee, SalaryPayment.employee_id == Employee.id)
+            .where(
+                SalaryPayment.month == month,
+                SalaryPayment.year == year,
+                SalaryPayment.deleted_at.is_(None),
+                Employee.is_deleted.is_(False),  # Exclude soft-deleted employees
+            )
+        )
+        
+        # Apply company filter if provided
+        if company_id is not None:
+            query = query.where(Employee.company_id == company_id)
+        
+        # Count total (before pagination)
+        count_query = select(func.count()).select_from(query.subquery())
+        count_result = await self.session.execute(count_query)
+        total = count_result.scalar() or 0
+        
+        # Apply sorting
+        sort_column = {
+            "paid_on": SalaryPayment.paid_on,
+            "month": SalaryPayment.month,
+            "year": SalaryPayment.year,
+            "amount": SalaryPayment.amount,
+            "created_at": SalaryPayment.created_at,
+        }.get(sort_by, SalaryPayment.paid_on)
+        
+        if sort_order.lower() == "asc":
+            query = query.order_by(asc(sort_column))
+        else:
+            query = query.order_by(desc(sort_column))
+        
+        # Apply pagination
+        query = query.offset((page - 1) * page_size).limit(page_size)
+        
+        result = await self.session.execute(query)
+        items = list(result.scalars().all())
+        
+        return items, total
+
     async def get_salary_history_by_salary_details_id(
         self, salary_details_id: UUID
     ) -> list[SalaryHistory]:
@@ -394,6 +530,17 @@ class SalaryRepository:
         await self.session.refresh(salary_details)
         return salary_details
 
+    async def soft_delete_salary_details(
+        self, salary_details: SalaryDetails, deleted_by: UUID
+    ) -> SalaryDetails:
+        """Soft delete salary details record."""
+        from datetime import datetime, timezone
+        salary_details.deleted_at = datetime.now(timezone.utc)
+        salary_details.deleted_by = deleted_by
+        await self.session.commit()
+        await self.session.refresh(salary_details)
+        return salary_details
+
     async def create_bank_info(
         self, bank_info: BankInfo
     ) -> BankInfo:
@@ -411,11 +558,50 @@ class SalaryRepository:
         await self.session.refresh(bank_info)
         return bank_info
 
+    async def soft_delete_bank_info(
+        self, bank_info: BankInfo, deleted_by: UUID
+    ) -> BankInfo:
+        """Soft delete bank info record.
+        
+        Key Rules Enforced:
+        - Never hard deleted (only soft delete) - sets deleted_at, preserves record
+        - Used only for future payments - soft deletion doesn't affect past payments
+        
+        Note: This method only sets deleted_at and deleted_by. The record is never
+        physically removed from the database, preserving audit trail and ensuring
+        past payments remain unchanged.
+        """
+        from datetime import datetime, timezone
+        bank_info.deleted_at = datetime.now(timezone.utc)
+        bank_info.deleted_by = deleted_by
+        await self.session.commit()
+        await self.session.refresh(bank_info)
+        return bank_info
+
     async def create_salary_payment(
         self, salary_payment: SalaryPayment
     ) -> SalaryPayment:
         """Create new salary payment record."""
         self.session.add(salary_payment)
+        await self.session.commit()
+        await self.session.refresh(salary_payment)
+        return salary_payment
+
+    async def update_salary_payment(
+        self, salary_payment: SalaryPayment
+    ) -> SalaryPayment:
+        """Update existing salary payment record."""
+        await self.session.commit()
+        await self.session.refresh(salary_payment)
+        return salary_payment
+
+    async def soft_delete_salary_payment(
+        self, salary_payment: SalaryPayment, deleted_by: UUID
+    ) -> SalaryPayment:
+        """Soft delete salary payment record."""
+        from datetime import datetime, timezone
+        salary_payment.deleted_at = datetime.now(timezone.utc)
+        salary_payment.deleted_by = deleted_by
         await self.session.commit()
         await self.session.refresh(salary_payment)
         return salary_payment

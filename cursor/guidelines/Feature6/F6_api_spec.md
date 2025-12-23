@@ -131,11 +131,17 @@ All API endpoints require JWT Bearer token authentication.
 
 | Method | Path | Purpose | Auth |
 |--------|------|---------|------|
-| GET | `/v1/company/employees/{employee_id}/salary` | Get salary overview | CEO, HR |
-| POST | `/v1/company/employees/{employee_id}/salary` | Create/Update SalaryDetails | CEO, HR |
-| PATCH | `/v1/company/employees/{employee_id}/salary/bank-info` | Upsert BankInfo | CEO, HR |
-| POST | `/v1/company/employees/{employee_id}/salary/payments` | Create SalaryPayment | CEO, HR |
-| GET | `/v1/company/employees/{employee_id}/salary/payments` | List SalaryPayments | CEO, HR |
+| GET | `/v1/company/employees/{employee_id}/salary` | Get active salary | CEO, HR |
+| POST | `/v1/company/employees/{employee_id}/salary` | Create initial salary | CEO, HR |
+| POST | `/v1/company/employees/{employee_id}/salary/revise` | Revise salary (increment/change) | CEO, HR |
+| GET | `/v1/company/employees/{employee_id}/salary/history` | Get salary history | CEO, HR |
+| GET | `/v1/company/employees/{employee_id}/salary/bank-info` | Get BankInfo | CEO, HR |
+| POST | `/v1/company/employees/{employee_id}/salary/bank-info` | Create BankInfo | CEO, HR |
+| PATCH | `/v1/company/employees/{employee_id}/salary/bank-info` | Update BankInfo | CEO, HR |
+| DELETE | `/v1/company/employees/{employee_id}/salary/bank-info` | Delete BankInfo | CEO, HR |
+| POST | `/v1/company/employees/{employee_id}/salary/salary-payments/run` | Execute salary payment | CEO, HR |
+| GET | `/v1/company/employees/{employee_id}/salary/payments` | Get employee salary payments | Employee (self), CEO, HR |
+| GET | `/v1/salary-payments` | Get salary payments by month/year | CEO, HR |
 | GET | `/v1/company/employees/{employee_id}/salary/payments/{payment_id}/slip` | Download salary slip | CEO, HR |
 
 ### 4.3 Endpoint Details
@@ -145,7 +151,8 @@ All endpoint router implementations MUST use centralized documentation classes. 
 
 #### 4.3.1 GET /v1/company/employees/{employee_id}/salary
 
-- **Purpose:** Retrieve complete salary overview for an employee, including current salary details, salary history, bank information, and payment summary
+- **Purpose:** Get active salary for an employee
+- **Used for:** Payroll, Employee view, Offer confirmation
 - **Authentication:** Required (JWT Bearer token)
 - **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
 - **Headers:**
@@ -164,118 +171,42 @@ All endpoint router implementations MUST use centralized documentation classes. 
 |------|------|----------|-------------|
 | employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
 
-**Query Parameters**
+**Path Parameters**
 
-**Note:** Query parameters MUST be defined using a query schema class with `Depends()` pattern (Rule 9), NOT individual `Query()` parameters in the router endpoint.
-
-**Query Schema Class (REQUIRED):**
-```python
-class SalaryOverviewQuery(BaseModel):
-    """Query schema for salary overview endpoint."""
-
-    include_history: bool = Field(True, description="Include salary history records")
-    include_payments: bool = Field(True, description="Include recent payment summary")
-    payment_limit: int = Field(10, ge=1, le=100, description="Number of recent payments to include (1-100)")
-
-    model_config = ConfigDict(from_attributes=True)
-```
-
-**Router Endpoint Pattern (REQUIRED):**
-```python
-@router.get(
-    "/salary",
-    response_model=StandardResponse[SalaryOverviewResponse],
-    summary=SalaryApiDocs.get_overview.summary,
-    description=SalaryApiDocs.get_overview.description
-)
-async def get_salary_overview(
-    employee_id: UUID,
-    query: SalaryOverviewQuery = Depends(SalaryOverviewQuery),
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_ceo_or_hr),
-):
-    """Get salary overview for an employee."""
-    # Access via query.include_history, query.include_payments, query.payment_limit
-```
-
-
-**Query Parameters Table (for documentation only):**
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| include_history | boolean | No | true | Include salary history records in response |
-| include_payments | boolean | No | true | Include recent payment summary in response |
-| payment_limit | integer | No | 10 | Number of recent payments to include (1-100) |
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
 
 **Success Response (200 OK)**
 
 ```json
 {
   "data": {
-    "employee": {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "first_name": "John",
-      "last_name": "Doe",
-      "is_active": true
-    },
-    "current_salary": {
-      "id": "660e8400-e29b-41d4-a716-446655440001",
-      "amount": "80000.00",
-      "currency": "INR",
-      "payment_frequency": "MONTHLY",
-      "effective_from": "2024-01-01",
-      "effective_to": "2024-12-31",
-      "created_at": "2024-01-01T10:00:00Z",
-      "updated_at": "2024-01-01T10:00:00Z"
-    },
-    "bank_info": {
-      "bank_name": "HDFC",
-      "branch": "Mumbai Main Branch",
-      "account_number": "****1234",
-      "ifsc_code": "HDFC****5678"
-    },
-    "salary_history": [
-      {
-        "id": "990e8400-e29b-41d4-a716-446655440004",
-        "previous_amount": "75000.00",
-        "new_amount": "80000.00",
-        "effective_from": "2024-01-01",
-        "changed_by": "Jane Smith",
-        "created_at": "2024-01-01T10:00:00Z"
-      }
-    ],
-    "recent_payments": [
-      {
-        "id": "770e8400-e29b-41d4-a716-446655440002",
-        "amount": "80000.00",
-        "month": 3,
-        "year": 2024,
-        "paid_on": "2024-03-05T10:00:00Z",
-        "payment_method": "BANK_TRANSFER",
-        "slip_url": "/v1/company/employees/550e8400-e29b-41d4-a716-446655440000/salary/payments/770e8400-e29b-41d4-a716-446655440002/slip"
-      }
-    ],
-    "current_salary_amount": "80000.00",
-    "current_salary_currency": "INR",
-    "has_active_salary": true,
-    "masked_account_number": "****1234"
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "employee_id": "550e8400-e29b-41d4-a716-446655440000",
+    "amount": "80000.00",
+    "currency": "INR",
+    "payment_frequency": "MONTHLY",
+    "effective_from": "2024-01-01",
+    "effective_to": null,
+    "created_at": "2024-01-01T10:00:00Z",
+    "updated_at": "2024-01-01T10:00:00Z",
+    "created_by": "Jane Smith",
+    "updated_by": "Jane Smith"
   },
-  "message": "Salary overview retrieved successfully"
+  "message": "Active salary retrieved successfully"
 }
 ```
 
 **Response Headers:**
 - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
-- `ETag: "20240120T103000Z"` (REQUIRED - based on latest `updated_at` from any related resource)
+- `ETag: "20240120T103000Z"` (REQUIRED - based on `updated_at` from active salary)
 - `Last-Modified: Wed, 20 Jan 2024 10:30:00 GMT` (optional)
 
 **Note:** 
 - Field order shown is for readability only. JSON objects are unordered (RFC 7159). Do not require or emphasize field order.
 - DO NOT include `success` field - HTTP status codes indicate success/failure.
-- Sensitive bank fields (`account_number`, `ifsc_code`) are masked in all responses.
-- If employee has no active salary, `current_salary`, `current_salary_amount`, and `current_salary_currency` will be `null`, and `has_active_salary` will be `false`.
-- If employee has no bank info, `bank_info` will be `null` and `masked_account_number` will be `null`.
-- Derived fields: `current_salary_amount` and `current_salary_currency` are derived from the active `current_salary` record. `masked_account_number` is derived from `bank_info.account_number` with masking applied.
+- Returns 404 if no active salary exists (effective_to IS NULL).
 
 **Error Responses**
 
@@ -286,6 +217,7 @@ async def get_salary_overview(
 | 401 | `TOKEN_EXPIRED` | JWT token has expired |
 | 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
 | 404 | `EMPLOYEE_NOT_FOUND` | Employee does not exist or not in user's organization |
+| 404 | `SALARY_DETAILS_NOT_FOUND` | No active salary exists for this employee |
 | 304 | `NOT_MODIFIED` | Resource unchanged (If-None-Match header matches current ETag) |
 | 500 | `INTERNAL_ERROR` | Server error |
 
@@ -315,13 +247,12 @@ async def get_salary_overview(
 
 #### 4.3.2 POST /v1/company/employees/{employee_id}/salary
 
-- **Purpose:** Create new SalaryDetails or update existing salary (creates new record and auto-closes previous active record)
+- **Purpose:** Create initial salary for an employee
 - **Authentication:** Required (JWT Bearer token)
 - **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
 - **Headers:**
   - **Request Headers:**
     - `Authorization: Bearer <token>` (REQUIRED)
-    - `If-Match: "20240120T103000Z"` (REQUIRED when updating existing active SalaryDetails - ETag from GET salary overview response, based on current salary's `updated_at`. OPTIONAL when creating first salary for employee)
   - **Response Headers (REQUIRED):**
     - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
     - `ETag: "20240120T103500Z"` (New ETag after creation, based on new `updated_at`)
@@ -354,12 +285,18 @@ async def get_salary_overview(
 }
 ```
 
+**Validations:**
+- No active salary exists (returns 409 if active salary exists - use revise endpoint instead)
+- effective_from >= today
+
 **Business Rules:**
-- Only one active SalaryDetails per employee (system auto-closes previous record)
+- Only one active SalaryDetails per employee
+- Creates initial salary record (effective_to = NULL)
+- No salary history entry created for initial salary
 - No overlapping effective periods (system validates)
 - User provides both `effective_from` and `effective_to` for the new SalaryDetails record
 - Creating new SalaryDetails automatically sets `effective_to` on the previous active record to `effective_from - 1 day` (to prevent overlap)
-- System creates SalaryHistory entry automatically when updating existing salary
+- System creates SalaryHistory entry automatically when creating salary if previous salary existed
 - If no previous SalaryDetails exists, this becomes the first record (no SalaryHistory entry created)
 
 **Success Response (201 Created)**
@@ -445,19 +382,196 @@ async def get_salary_overview(
 
 ---
 
-#### 4.3.3 PATCH /v1/company/employees/{employee_id}/salary/bank-info
+#### 4.3.3 POST /v1/company/employees/{employee_id}/salary/revise
 
-- **Purpose:** Create or update BankInfo for an employee (upsert pattern - creates if not exists, updates if exists)
+- **Purpose:** Revise salary (increment/change)
+- **Why separate endpoint?** Because revise ≠ update.
 - **Authentication:** Required (JWT Bearer token)
 - **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
 - **Headers:**
   - **Request Headers:**
     - `Authorization: Bearer <token>` (REQUIRED)
-    - `If-Match: "20240120T103000Z"` (REQUIRED when updating existing BankInfo - ETag from GET salary overview response, based on bank_info's `updated_at`. OPTIONAL when creating new BankInfo for employee)
+    - `If-Match: "20240120T103000Z"` (REQUIRED - ETag from GET active salary response, based on active salary's `updated_at`)
   - **Response Headers (REQUIRED):**
     - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
-    - `ETag: "20240120T103500Z"` (New ETag after update, based on new `updated_at`)
-- **Idempotency:** Yes (upsert is idempotent)
+    - `ETag: "20240120T103500Z"` (New ETag after revision, based on new salary's `updated_at`)
+- **Idempotency:** No (creates new record each time)
+
+**Path Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
+
+**Request Body**
+
+Same as POST endpoint (Section 4.3.2).
+
+**Backend Logic:**
+1. Fetch active salary
+2. Set effective_to = effective_from - 1 day (yesterday relative to new effective_from)
+3. Insert new salary record with new amount, effective_from = today, effective_to = NULL
+
+**Business Rules:**
+- Requires active salary to exist (returns 400 if no active salary - use create endpoint instead)
+- Never updates in-place - always closes old record and creates new one
+- Creates SalaryHistory entry automatically
+- Validates no overlapping effective periods (excluding the active salary being closed)
+
+**Success Response (200 OK)**
+
+Same format as POST endpoint (Section 4.3.2), with message: "Salary revised successfully"
+
+**Error Responses**
+
+| HTTP Status | Error Code | When |
+|-------------|------------|------|
+| 400 | `INVALID_REQUEST` | Invalid employee_id format or request body validation failed |
+| 400 | `NO_ACTIVE_SALARY` | No active salary exists (use create endpoint instead) |
+| 401 | `UNAUTHENTICATED` | Missing or invalid JWT token |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
+| 404 | `EMPLOYEE_NOT_FOUND` | Employee does not exist or not in user's organization |
+| 409 | `OVERLAPPING_SALARY_PERIOD` | Salary period overlaps with existing SalaryDetails |
+| 412 | `PRECONDITION_FAILED` | If-Match header provided but ETag mismatch (resource was modified) |
+| 500 | `INTERNAL_ERROR` | Server error |
+
+---
+
+#### 4.3.4 GET /v1/company/employees/{employee_id}/salary/history
+
+- **Purpose:** Get salary history for an employee
+- **HR / CEO only.**
+- **Authentication:** Required (JWT Bearer token)
+- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Headers:**
+  - **Request Headers:**
+    - `Authorization: Bearer <token>` (REQUIRED)
+  - **Response Headers (REQUIRED):**
+    - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+- **Idempotency:** Yes (GET is idempotent)
+
+**Path Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
+
+**Success Response (200 OK)**
+
+```json
+{
+  "data": [
+    {
+      "id": "990e8400-e29b-41d4-a716-446655440004",
+      "previous_amount": "75000.00",
+      "new_amount": "80000.00",
+      "effective_from": "2024-01-01",
+      "changed_by": "Jane Smith",
+      "created_at": "2024-01-01T10:00:00Z"
+    },
+    {
+      "id": "880e8400-e29b-41d4-a716-446655440003",
+      "previous_amount": "70000.00",
+      "new_amount": "75000.00",
+      "effective_from": "2023-06-01",
+      "changed_by": "John Doe",
+      "created_at": "2023-06-01T09:00:00Z"
+    }
+  ],
+  "message": "Salary history retrieved successfully"
+}
+```
+
+**Response Headers:**
+- `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+
+**Note:** 
+- Field order shown is for readability only. JSON objects are unordered (RFC 7159). Do not require or emphasize field order.
+- DO NOT include `success` field - HTTP status codes indicate success/failure.
+- Returns empty array if no salary history exists.
+- History entries are sorted by created_at descending (newest first).
+
+**Error Responses**
+
+| HTTP Status | Error Code | When |
+|-------------|------------|------|
+| 400 | `INVALID_REQUEST` | Invalid employee_id format |
+| 401 | `UNAUTHENTICATED` | Missing or invalid JWT token |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
+| 404 | `EMPLOYEE_NOT_FOUND` | Employee does not exist or not in user's organization |
+| 500 | `INTERNAL_ERROR` | Server error |
+
+---
+
+#### 4.3.3 GET /v1/company/employees/{employee_id}/salary/bank-info
+
+- **Purpose:** Retrieve bank information for an employee
+- **Authentication:** Required (JWT Bearer token)
+- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Headers:**
+  - **Request Headers:**
+    - `Authorization: Bearer <token>` (REQUIRED)
+    - `If-None-Match: "20240120T103000Z"` (optional, for cache validation - returns 304 if unchanged)
+  - **Response Headers (REQUIRED):**
+    - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+    - `ETag: "20240120T103000Z"` (REQUIRED - based on bank_info's `updated_at`)
+    - `Last-Modified: Wed, 20 Jan 2024 10:30:00 GMT` (optional)
+- **Idempotency:** Yes (GET is idempotent)
+
+**Path Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
+
+**Success Response (200 OK)**
+
+```json
+{
+  "data": {
+    "id": "880e8400-e29b-41d4-a716-446655440003",
+    "employee_id": "550e8400-e29b-41d4-a716-446655440000",
+    "bank_name": "HDFC",
+    "branch": "Mumbai Main Branch",
+    "account_number": "****3456",
+    "ifsc_code": "HDFC****234",
+    "created_at": "2024-01-01T10:00:00Z",
+    "updated_at": "2024-01-15T10:30:00Z",
+    "created_by": "Jane Smith",
+    "updated_by": "Jane Smith"
+  },
+  "message": "Bank information retrieved successfully"
+}
+```
+
+**Error Responses**
+
+| HTTP Status | Error Code | When |
+|-------------|------------|------|
+| 401 | `UNAUTHENTICATED` | Missing or invalid JWT token |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
+| 404 | `EMPLOYEE_NOT_FOUND` | Employee does not exist or not in user's organization |
+| 404 | `BANK_INFO_NOT_FOUND` | Bank information not found for employee |
+| 304 | `NOT_MODIFIED` | Resource unchanged (If-None-Match header matches current ETag) |
+| 500 | `INTERNAL_ERROR` | Server error |
+
+---
+
+#### 4.3.3a POST /v1/company/employees/{employee_id}/salary/bank-info
+
+- **Purpose:** Create new BankInfo for an employee
+- **Authentication:** Required (JWT Bearer token)
+- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Headers:**
+  - **Request Headers:**
+    - `Authorization: Bearer <token>` (REQUIRED)
+  - **Response Headers (REQUIRED):**
+    - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+    - `ETag: "20240120T103500Z"` (New ETag after creation, based on new `updated_at`)
+- **Idempotency:** No (creates new record)
 
 **Path Parameters**
 
@@ -485,10 +599,68 @@ async def get_salary_overview(
 ```
 
 **Business Rules:**
-- Only one BankInfo per employee (upsert pattern)
-- BankInfo is never deleted (soft delete or updates only)
+- Only one BankInfo per employee (returns 409 if already exists)
+- BankInfo is never hard-deleted (soft delete only)
 - Updates affect future salary payments only
 - Past salary payments remain unchanged
+
+**Success Response (201 Created)**
+
+```json
+{
+  "data": {
+    "id": "880e8400-e29b-41d4-a716-446655440003",
+    "employee_id": "550e8400-e29b-41d4-a716-446655440000",
+    "bank_name": "HDFC",
+    "branch": "Mumbai Main Branch",
+    "account_number": "****3456",
+    "ifsc_code": "HDFC****234",
+    "created_at": "2024-01-01T10:00:00Z",
+    "updated_at": "2024-01-01T10:00:00Z",
+    "created_by": "Jane Smith",
+    "updated_by": "Jane Smith"
+  },
+  "message": "Bank information created successfully"
+}
+```
+
+**Error Responses**
+
+| HTTP Status | Error Code | When |
+|-------------|------------|------|
+| 400 | `VALIDATION_FAILED` | Invalid request body format or validation errors |
+| 401 | `UNAUTHENTICATED` | Missing or invalid JWT token |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
+| 404 | `EMPLOYEE_NOT_FOUND` | Employee does not exist or not in user's organization |
+| 409 | `BANK_INFO_ALREADY_EXISTS` | Bank information already exists for this employee |
+| 500 | `INTERNAL_ERROR` | Server error |
+
+---
+
+#### 4.3.3b PATCH /v1/company/employees/{employee_id}/salary/bank-info
+
+- **Purpose:** Update existing BankInfo for an employee
+- **Authentication:** Required (JWT Bearer token)
+- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Headers:**
+  - **Request Headers:**
+    - `Authorization: Bearer <token>` (REQUIRED)
+    - `If-Match: "20240120T103000Z"` (REQUIRED - ETag from GET bank-info response, based on bank_info's `updated_at`)
+  - **Response Headers (REQUIRED):**
+    - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+    - `ETag: "20240120T103500Z"` (New ETag after update, based on new `updated_at`)
+- **Idempotency:** Yes (idempotent)
+
+**Path Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
+
+**Request Body**
+
+Same as POST endpoint (Section 4.3.3a).
 
 **Success Response (200 OK)**
 
@@ -561,9 +733,45 @@ async def get_salary_overview(
 
 ---
 
-#### 4.3.4 POST /v1/company/employees/{employee_id}/salary/payments
+#### 4.3.3c DELETE /v1/company/employees/{employee_id}/salary/bank-info
 
-- **Purpose:** Create a monthly salary payment record for an employee
+- **Purpose:** Soft delete BankInfo for an employee
+- **Authentication:** Required (JWT Bearer token)
+- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Headers:**
+  - **Request Headers:**
+    - `Authorization: Bearer <token>` (REQUIRED)
+  - **Response Headers (REQUIRED):**
+    - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+- **Idempotency:** Yes (idempotent)
+
+**Path Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| employee_id | string (UUID) | Yes | Employee UUID (RFC 4122 UUID v4 format) |
+
+**Success Response (204 No Content)**
+
+Empty response body.
+
+**Error Responses**
+
+| HTTP Status | Error Code | When |
+|-------------|------------|------|
+| 401 | `UNAUTHENTICATED` | Missing or invalid JWT token |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
+| 404 | `EMPLOYEE_NOT_FOUND` | Employee does not exist or not in user's organization |
+| 404 | `BANK_INFO_NOT_FOUND` | Bank information not found for employee |
+| 500 | `INTERNAL_ERROR` | Server error |
+
+---
+
+#### 4.3.4 POST /v1/company/employees/{employee_id}/salary/salary-payments/run
+
+- **Purpose:** Execute salary payment for an employee
+- **Used By:** HR, Automated payroll job
 - **Authentication:** Required (JWT Bearer token)
 - **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
 - **Headers:**
@@ -583,29 +791,37 @@ async def get_salary_overview(
 
 | Field | Type | Required | Description | Validation |
 |-------|------|----------|-------------|------------|
+| employee_id | string (UUID) | Yes | Employee UUID | RFC 4122 UUID v4 format |
 | month | integer | Yes | Salary month | Integer, min 1, max 12 |
 | year | integer | Yes | Salary year | Integer, min 2000, max 9999, YYYY format |
 | payment_method | string | Yes | Mode of payment | Enum: "BANK_TRANSFER", "UPI", "CHEQUE", "CASH" (case-sensitive) |
-| paid_on | string (datetime) | Yes | Payment execution date | ISO 8601 datetime format (YYYY-MM-DDTHH:mm:ssZ), UTC timezone |
 
 **Request Body Example:**
 ```json
 {
+  "employee_id": "550e8400-e29b-41d4-a716-446655440000",
   "month": 3,
-  "year": 2024,
-  "payment_method": "BANK_TRANSFER",
-  "paid_on": "2024-03-05T10:00:00Z"
+  "year": 2025,
+  "payment_method": "BANK_TRANSFER"
 }
 ```
+
+**Backend Logic:**
+1. Check payment not already done
+2. Fetch active salary_details
+3. Fetch active bank_info
+4. Insert salary_payment (with paid_on = current time)
+5. Trigger async slip generation
 
 **Business Rules:**
 - Only one SalaryPayment per employee per month/year (duplicate rejected with 409)
 - Amount is automatically derived from active SalaryDetails for the payment month
 - Cannot create payment without active SalaryDetails (422 error)
-- SalaryPayment records are immutable (cannot be updated or deleted)
+- Cannot create payment without active BankInfo (404 error)
 - System automatically generates salary slip (async operation)
 - System automatically emails salary slip to employee via F-003 (Notifications System)
 - Payment amount is calculated based on active SalaryDetails for the payment month/year
+- **Note:** SalaryPayment records are immutable legal records. Amount, currency, month, and year cannot be changed. PUT and DELETE operations are forbidden.
 
 **Success Response (201 Created)**
 
@@ -705,9 +921,12 @@ async def get_salary_overview(
 
 #### 4.3.5 GET /v1/company/employees/{employee_id}/salary/payments
 
-- **Purpose:** List all salary payments for an employee with pagination, filtering, and sorting
+- **Purpose:** Get employee salary payments
+- **Role Scope:**
+  - Employee → self only
+  - HR / CEO → company scope
 - **Authentication:** Required (JWT Bearer token)
-- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Authorization / Roles:** Employee (self only), CEO, HR (company scope)
 - **Headers:**
   - **Request Headers:**
     - `Authorization: Bearer <token>` (REQUIRED)
@@ -835,7 +1054,94 @@ async def list_salary_payments(
 
 ---
 
-#### 4.3.6 GET /v1/company/employees/{employee_id}/salary/payments/{payment_id}/slip
+#### 4.3.6 GET /v1/salary-payments
+
+- **Purpose:** Get salary payments by month/year across company
+- **Used for:**
+  - Payroll reports
+  - Compliance
+  - Finance reconciliation
+- **Authentication:** Required (JWT Bearer token)
+- **Authorization / Roles:** CEO, HR only (Employee and Manager access denied)
+- **Headers:**
+  - **Request Headers:**
+    - `Authorization: Bearer <token>` (REQUIRED)
+  - **Response Headers (REQUIRED):**
+    - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+- **Idempotency:** Yes (GET is idempotent)
+
+**Query Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| month | integer | Yes | Salary month (1-12) |
+| year | integer | Yes | Salary year (YYYY format, 2000-9999) |
+| page | integer | No | Page number (≥ 1, default: 1) |
+| page_size | integer | No | Page size (1-100, default: 20) |
+| sort_by | string | No | Sort field: paid_on, month, year, amount, created_at (default: paid_on) |
+| sort_order | string | No | Sort order: asc or desc (default: desc) |
+
+**Success Response (200 OK)**
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "770e8400-e29b-41d4-a716-446655440002",
+        "employee_id": "550e8400-e29b-41d4-a716-446655440000",
+        "amount": "80000.00",
+        "currency": "INR",
+        "month": 3,
+        "year": 2025,
+        "paid_on": "2025-03-05T10:00:00Z",
+        "payment_method": "BANK_TRANSFER",
+        "slip_url": "/v1/company/employees/550e8400-e29b-41d4-a716-446655440000/salary/payments/770e8400-e29b-41d4-a716-446655440002/slip",
+        "payable_amount": "80000.00",
+        "payment_period_label": "March 2025",
+        "created_at": "2025-03-05T10:00:00Z",
+        "created_by": "Jane Smith"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1
+  },
+  "message": "Salary payments retrieved successfully"
+}
+```
+
+**Response Headers:**
+- `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
+
+**Note:** 
+- Field order shown is for readability only. JSON objects are unordered (RFC 7159). Do not require or emphasize field order.
+- DO NOT include `success` field - HTTP status codes indicate success/failure.
+- Returns all salary payments for the specified month/year across the company (filtered by company_id for company-scoped users).
+
+**Error Responses**
+
+| HTTP Status | Error Code | When |
+|-------------|------------|------|
+| 400 | `INVALID_REQUEST` | Invalid query parameter format or validation errors |
+| 401 | `UNAUTHENTICATED` | Missing or invalid JWT token |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 403 | `INSUFFICIENT_PERMISSIONS` | User is Employee or Manager (access denied) |
+| 500 | `INTERNAL_ERROR` | Server error |
+
+---
+
+**❌ Forbidden Endpoints:**
+
+- ❌ PUT /salary-payments/{id}
+- ❌ DELETE /salary-payments/{id}
+
+Salary payments are legal records and are immutable. PUT and DELETE operations are forbidden.
+
+---
+
+#### 4.3.7 GET /v1/company/employees/{employee_id}/salary/payments/{payment_id}/slip
 
 - **Purpose:** Download salary slip PDF for a specific salary payment
 - **Authentication:** Required (JWT Bearer token)
@@ -902,7 +1208,7 @@ async def list_salary_payments(
 
 ### 5.1 Salary Slip Generation
 
-**Async Operation:** When a SalaryPayment is created via `POST /v1/company/employees/{employee_id}/salary/payments`, the system:
+**Async Operation:** When a SalaryPayment is created via `POST /v1/company/employees/{employee_id}/salary/salary-payments/run`, the system:
 
 1. Creates the SalaryPayment record immediately (synchronous)
 2. Triggers async salary slip generation (background job)
@@ -968,10 +1274,10 @@ None identified at this stage.
 4. **Audit Logging (F-011):** Audit logging system is available and automatically logs all salary-related actions
 5. **Salary Slip Generation:** External service/template is available for generating salary slip PDFs
 6. **Multi-tenancy:** All salary data is scoped to the organization from the JWT token's `org_id` claim
-7. **Data Immutability:** SalaryPayment and SalaryHistory records are never modified or deleted (append-only)
+7. **Data Immutability:** SalaryPayment and SalaryHistory records are never modified or deleted (append-only). Salary payments are legal records and PUT/DELETE operations are forbidden.
 8. **BankInfo Updates:** Updates to BankInfo affect future salary payments only, past payments remain unchanged
 9. **No Retroactive Recalculation:** System does not support retroactive salary recalculation
-10. **Manual Payment Execution:** Salary payment execution is manual (not scheduled/automated)
+10. **Payment Execution:** Salary payment execution is done via `POST /salary-payments/run` endpoint (used by HR and automated payroll jobs)
 
 ---
 
@@ -1057,11 +1363,12 @@ None identified at this stage.
 | BR-601 | Salary amount represents monthly gross pay | Validation |
 | BR-602 | Only one active SalaryDetails per employee | Business logic |
 | BR-603 | Salary updates auto-close previous config | Business logic |
-| BR-604 | Salary payments are immutable | Constraint (no update/delete) |
-| BR-605 | Only CEO and HR can create salary payments | Authorization |
+| BR-604 | Salary payment records are immutable legal records | Constraint (PUT and DELETE operations are forbidden) |
+| BR-605 | Only CEO and HR can execute salary payments | Authorization |
 | BR-606 | Bank info updates affect future payments only | Business logic |
-| BR-607 | Employees can view only their own salary data | Authorization (not applicable in V1 - no employee API access) |
+| BR-607 | Employees can view only their own salary payments | Authorization (Employee → self only, HR/CEO → company scope) |
 | BR-608 | Salary slip generated per salary payment | Async operation |
+| BR-609 | Payment execution requires active salary_details and bank_info | Validation |
 
 ---
 
@@ -1080,7 +1387,7 @@ None identified at this stage.
 | `SALARY_SLIP_NOT_FOUND` | 404 | Salary slip file not found |
 | `OVERLAPPING_SALARY_PERIOD` | 409 | New salary period overlaps with existing SalaryDetails |
 | `DUPLICATE_SALARY_PAYMENT` | 409 | Salary payment already exists for employee, month, and year |
-| `DUPLICATE_BANK_INFO` | 409 | Bank info conflict (should not occur due to upsert pattern, but documented for completeness) |
+| `BANK_INFO_ALREADY_EXISTS` | 409 | Bank information already exists for this employee (use update endpoint instead) |
 | `PRECONDITION_FAILED` | 412 | ETag mismatch (If-Match header doesn't match current resource version) |
 | `PRECONDITION_REQUIRED` | 428 | If-Match header required but missing (when updating existing resource) |
 | `BUSINESS_RULE_FAILED` | 422 | Business rule violation (e.g., no active salary for payment) |

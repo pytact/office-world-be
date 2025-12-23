@@ -13,6 +13,7 @@ from src.auth.dependencies import get_current_user, oauth2_scheme
 from src.auth.utils import decode_token
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
+from src.permissions.models import Role
 from src.users.service import UserService
 from src.users.exceptions import InsufficientPermissions
 from src.permissions.models import UserRoleAssignment
@@ -65,6 +66,7 @@ async def get_current_user_with_token(
 
 async def get_current_superadmin(
     user_token: tuple[User, dict] = Depends(get_current_user_with_token),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
     """Get current authenticated user and verify SuperAdmin role.
     
@@ -75,11 +77,21 @@ async def get_current_superadmin(
     
     user, payload = user_token
     
-    role = payload.get("role")
+    # Extract role_id from token and fetch role from database
+    role_id_str = payload.get("role_id")
+    if not role_id_str:
+        raise InsufficientPermissions("role_id is required in token")
+    
+    role_id = UUID(role_id_str)
+    role_obj = await session.get(Role, role_id)
+    if not role_obj:
+        raise InsufficientPermissions("Invalid role_id in token")
+    
+    role_code = role_obj.code.lower()
     company_id = payload.get("company_id")
     
     # Case-insensitive comparison to handle "SuperAdmin" vs "superadmin"
-    if role is None or role.lower() != ROLE_CODE_SUPERADMIN.lower() or company_id is not None:
+    if role_code != ROLE_CODE_SUPERADMIN.lower() or company_id is not None:
         raise InsufficientPermissions("access platform-wide user list")
     
     return user
@@ -104,15 +116,27 @@ async def get_current_company_user(
     return user, company_id
 
 
-def get_user_role_from_token(
+async def get_user_role_from_token(
     user_token: tuple[User, dict] = Depends(get_current_user_with_token),
+    session: AsyncSession = Depends(get_session),
 ) -> str:
     """Extract role from token payload.
     
     Returns role code (superadmin, ceo, hr, manager, employee).
     """
     _, payload = user_token
-    return payload.get("role", "employee")
+    
+    # Extract role_id from token and fetch role from database
+    role_id_str = payload.get("role_id")
+    if not role_id_str:
+        return "employee"  # Default fallback
+    
+    role_id = UUID(role_id_str)
+    role_obj = await session.get(Role, role_id)
+    if not role_obj:
+        return "employee"  # Default fallback
+    
+    return role_obj.code.lower()
 
 
 class UserApiDep:

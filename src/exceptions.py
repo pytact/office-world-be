@@ -213,8 +213,14 @@ def extract_constraint_info(error_msg: str) -> tuple[Optional[str], str]:
 
 async def database_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handler for database constraint violations."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Get or generate X-Request-ID
     x_request_id = request.headers.get("X-Request-ID") or f"req_{uuid4().hex[:12]}"
+    
+    # Log the actual exception for debugging
+    logger.error(f"Database exception: {type(exc).__name__}: {str(exc)}", exc_info=True)
     
     # Handle IntegrityError (wraps asyncpg exceptions)
     if isinstance(exc, IntegrityError):
@@ -296,17 +302,32 @@ async def database_exception_handler(request: Request, exc: Exception) -> JSONRe
 
         # Handle Check Violation
         elif isinstance(orig_exc, CheckViolationError):
-            _, field_name = extract_constraint_info(str(orig_exc))
-            response = JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                content={
-                    "error": {
-                        "code": "CHECK_CONSTRAINT_VIOLATION",
-                        "details": [{"field": field_name, "issue": "Value violates check constraint"}],
+            error_msg = str(orig_exc)
+            constraint_name, field_name = extract_constraint_info(error_msg)
+            
+            # Provide specific error message for effective_from constraint
+            if constraint_name and "effective_from" in constraint_name.lower():
+                response = JSONResponse(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    content={
+                        "error": {
+                            "code": "INVALID_EFFECTIVE_FROM_DATE",
+                            "details": [{"field": "effective_from", "issue": "Effective from date must be today or a future date (timezone mismatch may cause this error)"}],
+                        },
+                        "message": "The effective_from date must be today or a future date. Please ensure the date is correct and accounts for timezone differences.",
                     },
-                    "message": f"The value provided for '{field_name}' violates a validation rule.",
-                },
-            )
+                )
+            else:
+                response = JSONResponse(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    content={
+                        "error": {
+                            "code": "CHECK_CONSTRAINT_VIOLATION",
+                            "details": [{"field": field_name, "issue": "Value violates check constraint"}],
+                        },
+                        "message": f"The value provided for '{field_name}' violates a validation rule.",
+                    },
+                )
             response.headers["X-Request-ID"] = x_request_id
             return response
 
@@ -398,14 +419,23 @@ async def database_exception_handler(request: Request, exc: Exception) -> JSONRe
         return response
 
     # If we get here, it's an unhandled database exception
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Unhandled database exception: {type(exc).__name__}: {str(exc)}", exc_info=True)
+    
+    # Include exception details in response for debugging
+    error_details = []
+    if hasattr(exc, '__class__'):
+        error_details.append({"field": "exception_type", "issue": f"{type(exc).__name__}: {str(exc)}"})
+    
     response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "error": {
                 "code": "DATABASE_ERROR",
-                "details": [],
+                "details": error_details,
             },
-            "message": "A database error occurred",
+            "message": f"A database error occurred: {type(exc).__name__}: {str(exc)}",
         },
     )
     response.headers["X-Request-ID"] = x_request_id

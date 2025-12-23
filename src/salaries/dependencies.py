@@ -12,8 +12,9 @@ from src.auth.dependencies import oauth2_scheme
 from src.auth.utils import decode_token
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
+from src.permissions.models import Role
 from src.salaries.service import SalaryService
-from src.salaries.schemas import SalaryCreate, BankInfoUpsert, SalaryPaymentCreate, SalaryOverviewQuery, SalaryPaymentListQuery
+from src.salaries.schemas import SalaryCreate, BankInfoUpsert, SalaryPaymentCreate, SalaryPaymentRun, SalaryOverviewQuery, SalaryPaymentListQuery
 from src.salaries.exceptions import InsufficientPermissions
 from jose import JWTError
 
@@ -66,8 +67,18 @@ async def get_current_user_with_company(
         company_id_str = payload.get("org_id") or payload.get("company_id")
         company_id = UUID(company_id_str) if company_id_str else None
         
-        # Extract role from token
-        role = payload.get("role", "").lower()
+        # Extract role_id from token and fetch role from database
+        role_id_str = payload.get("role_id")
+        if not role_id_str:
+            raise InvalidCredentials("role_id is required in token")
+        
+        role_id = UUID(role_id_str)
+        role_obj = await session.get(Role, role_id)
+        if not role_obj:
+            raise InvalidCredentials("Invalid role_id in token")
+        
+        # Get role code from Role object
+        role = role_obj.code.lower()
         
         return user, company_id, role
     except (JWTError, ValueError, TypeError):
@@ -98,6 +109,37 @@ async def get_current_ceo_or_hr(
     return user, company_id
 
 
+async def get_current_user_with_employee_access(
+    employee_id: UUID,
+    user_company: tuple[User, Optional[UUID], str] = Depends(get_current_user_with_company),
+    session: AsyncSession = Depends(get_session),
+) -> tuple[User, Optional[UUID]]:
+    """Get current authenticated user and company_id.
+    
+    Allows Employee to access their own records (self only), HR/CEO to access company scope.
+    
+    Returns tuple of (User, company_id).
+    Raises InsufficientPermissions if Employee tries to access another employee's records.
+    """
+    from src.employees.repository import EmployeeRepository
+    
+    user, company_id, role = user_company
+    role_lower = role.lower() if role else ""
+    
+    # If Employee, check they're accessing their own records
+    if role_lower == "employee":
+        employee_repo = EmployeeRepository(session)
+        employee = await employee_repo.get_by_user_id(user.id, company_id)
+        if not employee or employee.id != employee_id:
+            raise InsufficientPermissions()
+    
+    # HR, CEO, SuperAdmin can access company scope
+    elif role_lower not in ["ceo", "hr", "superadmin"]:
+        raise InsufficientPermissions()
+    
+    return user, company_id
+
+
 class SalaryApiDep:
     """API dependency class for Salary Management endpoints.
     
@@ -109,19 +151,60 @@ class SalaryApiDep:
         self.service = SalaryService(session)
         self.session = session
 
-    async def get_salary_overview(
+    async def get_active_salary(
         self,
         employee_id: UUID,
         company_id: Optional[UUID],
-        query: SalaryOverviewQuery,
         if_none_match: Optional[str] = None,
     ):
-        """Get salary overview for employee."""
-        return await self.service.get_salary_overview(
+        """Get active salary for employee."""
+        return await self.service.get_active_salary(
             employee_id=employee_id,
             company_id=company_id,
-            query=query,
             if_none_match=if_none_match,
+        )
+
+    async def get_salary_history(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+    ):
+        """Get salary history for employee."""
+        return await self.service.get_salary_history(
+            employee_id=employee_id,
+            company_id=company_id,
+        )
+
+    async def create_salary(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: SalaryCreate,
+        user_id: UUID,
+    ):
+        """Create initial salary details."""
+        return await self.service.create_salary(
+            employee_id=employee_id,
+            company_id=company_id,
+            data=data,
+            user_id=user_id,
+        )
+
+    async def revise_salary(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: SalaryCreate,
+        user_id: UUID,
+        if_match: Optional[str] = None,
+    ):
+        """Revise salary details."""
+        return await self.service.revise_salary(
+            employee_id=employee_id,
+            company_id=company_id,
+            data=data,
+            user_id=user_id,
+            if_match=if_match,
         )
 
     async def create_or_update_salary(
@@ -139,6 +222,64 @@ class SalaryApiDep:
             data=data,
             user_id=user_id,
             if_match=if_match,
+        )
+
+    async def get_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        if_none_match: Optional[str] = None,
+    ):
+        """Get bank information for an employee."""
+        return await self.service.get_bank_info(
+            employee_id=employee_id,
+            company_id=company_id,
+            if_none_match=if_none_match,
+        )
+
+    async def create_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: BankInfoUpsert,
+        user_id: UUID,
+    ):
+        """Create bank information."""
+        return await self.service.create_bank_info(
+            employee_id=employee_id,
+            company_id=company_id,
+            data=data,
+            user_id=user_id,
+        )
+
+    async def update_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        data: BankInfoUpsert,
+        user_id: UUID,
+        if_match: Optional[str] = None,
+    ):
+        """Update bank information."""
+        return await self.service.update_bank_info(
+            employee_id=employee_id,
+            company_id=company_id,
+            data=data,
+            user_id=user_id,
+            if_match=if_match,
+        )
+
+    async def delete_bank_info(
+        self,
+        employee_id: UUID,
+        company_id: Optional[UUID],
+        user_id: UUID,
+    ):
+        """Delete bank information (soft delete)."""
+        return await self.service.delete_bank_info(
+            employee_id=employee_id,
+            company_id=company_id,
+            user_id=user_id,
         )
 
     async def upsert_bank_info(
@@ -184,6 +325,40 @@ class SalaryApiDep:
             employee_id=employee_id,
             company_id=company_id,
             query=query,
+        )
+
+    async def run_salary_payment(
+        self,
+        data: SalaryPaymentRun,
+        company_id: Optional[UUID],
+        user_id: UUID,
+    ):
+        """Execute salary payment."""
+        return await self.service.run_salary_payment(
+            data=data,
+            company_id=company_id,
+            user_id=user_id,
+        )
+
+    async def list_salary_payments_by_month_year(
+        self,
+        company_id: Optional[UUID],
+        month: int,
+        year: int,
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "paid_on",
+        sort_order: str = "desc",
+    ):
+        """List salary payments by month/year across company."""
+        return await self.service.list_salary_payments_by_month_year(
+            company_id=company_id,
+            month=month,
+            year=year,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
     async def get_salary_slip(

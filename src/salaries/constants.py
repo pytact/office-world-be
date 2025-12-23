@@ -23,9 +23,19 @@ ERROR_ASYNC_OPERATION_FAILED = "Salary slip generation or email delivery failed.
 
 # Success Messages
 SUCCESS_SALARY_OVERVIEW_RETRIEVED = "Salary overview retrieved successfully"
+SUCCESS_ACTIVE_SALARY_RETRIEVED = "Active salary retrieved successfully"
 SUCCESS_SALARY_DETAILS_CREATED = "Salary details created successfully"
+SUCCESS_SALARY_REVISED = "Salary revised successfully"
+SUCCESS_SALARY_HISTORY_RETRIEVED = "Salary history retrieved successfully"
+SUCCESS_SALARY_DETAILS_UPDATED = "Salary details updated successfully"
+SUCCESS_SALARY_DETAILS_DELETED = "Salary details deleted successfully"
+SUCCESS_BANK_INFO_RETRIEVED = "Bank information retrieved successfully"
+SUCCESS_BANK_INFO_CREATED = "Bank information created successfully"
 SUCCESS_BANK_INFO_UPDATED = "Bank information updated successfully"
+SUCCESS_BANK_INFO_DELETED = "Bank information deleted successfully"
 SUCCESS_SALARY_PAYMENT_CREATED = "Salary payment created successfully. Salary slip will be emailed to the employee."
+SUCCESS_SALARY_PAYMENT_UPDATED = "Salary payment updated successfully"
+SUCCESS_SALARY_PAYMENT_DELETED = "Salary payment deleted successfully"
 SUCCESS_SALARY_PAYMENTS_RETRIEVED = "Salary payments retrieved successfully"
 
 # Error Codes

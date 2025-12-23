@@ -1,0 +1,80 @@
+================================================================================
+                    ENTITY RELATIONSHIP DIAGRAM (ERD)
+                    Feature: F-008 — Task Management
+                    Project: officeWorld
+================================================================================
+
+RELATIONSHIP CARDINALITY:
+- Company 1..* Task (One Company has many Tasks)
+- Task 1..1 Employee (via owner_id) (One Task has exactly one Owner)
+- Task 1..* TaskAssignment (One Task has many Task Assignments)
+- Employee *..* Task (via TaskAssignment) (Many Employees assigned to many Tasks)
+- Task 0..1 Project (Task may or may not belong to a Project)
+- Project 1..1 Company (One Project belongs to exactly one Company)
+- Employee 1..1 Company (One Employee belongs to exactly one Company)
+
+================================================================================
+
+                    +------------------+
+                    |    Companies     |
+                    +------------------+
+                    | id (PK)          |
+                    +------------------+
+                            |
+                            | 1
+                            |
+                            |
+                            | *
+                            |
+                            |
+                            v
++------------------+                    +------------------+                    +------------------+
+|    Employees     |   1            *   |      Tasks       |   1            *    | task_assignments |
++------------------+<------------------>|                  |<------------------->|                  |
+| id (PK)          |                    | id (PK)          |                    | id (PK)          |
+| company_id (FK)  |                    | company_id (FK)  |                    | task_id (FK)     |
+|                  |                    | owner_id (FK)    |                    | employee_id (FK) |
+|                  |                    | project_id (FK)  |                    |                  |
++------------------+                    +------------------+                    +------------------+
+                                                  |
+                                                  | 0..1
+                                                  |
+                                                  |
+                                                  | *
+                                                  |
+                                                  |
+                                                  v
+                                        +------------------+
+                                        |    Projects      |
+                                        +------------------+
+                                        | id (PK)          |
+                                        | company_id (FK)  |
+                                        +------------------+
+                                                  |
+                                                  | 1
+                                                  |
+                                                  |
+                                                  | *
+                                                  |
+                                                  |
+                                                  v
+                                        +------------------+
+                                        |    Companies     |
+                                        +------------------+
+                                        | id (PK)          |
+                                        +------------------+
+
+================================================================================
+                              NOTES
+================================================================================
+
+- All tables shown with PRIMARY KEY (id) and FOREIGN KEY fields only
+- Business fields (name, description, status, etc.) are excluded per ERD rules
+- Audit fields (created_at, updated_at, etc.) are excluded per ERD rules
+- Crow's Foot notation: 1 = one, * = many, 0..1 = zero or one
+- Task owner (owner_id) is immutable and cannot be changed after creation
+- Task project association (project_id) is optional (nullable)
+- Task assignments support multiple employees per task with permission levels (VIEWER/EDITOR)
+- Hard deletion is used for tasks (no soft delete)
+
+================================================================================

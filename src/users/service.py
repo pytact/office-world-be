@@ -6,12 +6,15 @@ No HTTP concerns, no database queries (uses repository).
 
 from uuid import UUID, uuid4
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.users.models import User
 from src.permissions.models import UserRoleAssignment, Role
 from src.companies.models import Company
 from src.users.repository import UserRepository
+from src.employees.models import Employee
+from src.employees.repository import EmployeeRepository
+from src.employees.exceptions import DuplicateEmployee
 from src.users.schemas import (
     PlatformUserListQuery,
     CompanyUserListQuery,
@@ -80,6 +83,7 @@ class UserService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = UserRepository(session)
+        self.employee_repository = EmployeeRepository(session)
 
     def _calculate_invitation_status(
         self, invite_at: Optional[datetime], activate_at: Optional[datetime], expiry: Optional[datetime]
@@ -441,6 +445,13 @@ class UserService:
         # Check if user with email already exists
         existing_user = await self.repository.get_by_email(invite_data.email)
         if existing_user:
+            # Check if existing user already has an employee record for the target company
+            # (This prevents inviting a user who already has an employee record in this company)
+            if company_id:
+                existing_employee = await self.employee_repository.get_by_user_id(existing_user.id, company_id)
+                if existing_employee:
+                    raise DuplicateEmployee(str(existing_user.id))
+            
             if existing_user.is_active:
                 raise DuplicateEmail(invite_data.email)
             # If user exists but is inactive, this is re-invitation (handled in F-001B)
@@ -478,7 +489,29 @@ class UserService:
             created_by=inviter_id,
         )
         self.session.add(assignment)
-        await self.session.commit()  # Commit both user and assignment together
+        
+        # Create employee record for non-SuperAdmin roles with company_id
+        # (CEO, HR, Manager, Employee roles are company-bound and should have employee records)
+        if role_code_lower != ROLE_CODE_SUPERADMIN.lower() and company_id:
+            # Check if employee already exists (should not happen for new user, but safety check)
+            existing_employee = await self.employee_repository.get_by_user_id(user.id, company_id)
+            if existing_employee:
+                raise DuplicateEmployee(str(user.id))
+            
+            # Create employee record with default values
+            employee = Employee(
+                user_id=user.id,
+                company_id=company_id,
+                joining_date=date.today(),
+                employment_status='PROBATION',
+                is_active=True,
+                is_deleted=False,
+                created_by=inviter_id,
+                updated_by=inviter_id,
+            )
+            self.session.add(employee)
+        
+        await self.session.commit()  # Commit user, assignment, and employee together
         
         # Get company name for email (if company exists)
         company_name = "the platform"

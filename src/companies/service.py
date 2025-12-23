@@ -16,8 +16,10 @@ from src.companies.schemas import (
     CompanyListQuery,
     CompanyCreate,
     CompanyUpdate,
+    CompanyProfileUpdate,
     CompanySummary,
     CompanyDetail,
+    CompanyProfile,
     CompanyPaginatedResponse,
 )
 from src.companies.exceptions import (
@@ -29,6 +31,7 @@ from src.companies.exceptions import (
     PreconditionRequired,
     PreconditionFailed,
     ValidationFailed,
+    BusinessRuleFailed,
 )
 from src.companies.constants import (
     VALID_SORT_FIELDS,
@@ -362,3 +365,116 @@ class CompanyService:
 
         # Hard delete company (no dependency checks per F4 spec)
         await self.repository.hard_delete(company_id)
+
+    async def get_company_profile(
+        self, company_id: UUID, if_none_match: Optional[str] = None
+    ) -> CompanyProfile | FastAPIResponse:
+        """Get company profile (CEO/HR view) with ETag support.
+        
+        Based on F4_api_spec.md Section 4.4.6 - GET /api/v1/company/profile.
+        ETag logic in service layer per error_prevention.md RULE 19.
+        Excludes governance fields (is_deleted, audit fields, user_count).
+        """
+        company = await self.repository.get_by_id(company_id)
+        if not company:
+            raise CompanyNotFound(str(company_id))
+
+        # Generate ETag in service (business logic)
+        etag = generate_etag(company.updated_at)
+
+        # Check If-None-Match in service (version validation)
+        if if_none_match and if_none_match == etag:
+            # Return 304 in service (business logic decision)
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+
+        # Return company profile (excludes governance fields)
+        result = CompanyProfile(
+            name=company.name,
+            slug=company.slug,
+            description=company.description,
+            address=company.address,
+            city=company.city,
+            state=company.state,
+            country=company.country,
+            postal_code=company.postal_code,
+            website=company.website,
+            logo_url=company.logo_url,
+            is_active=company.is_active,
+        )
+        # Attach ETag to result for router to set header
+        result._etag = etag
+        result._last_modified = company.updated_at
+        return result
+
+    async def update_company_profile(
+        self,
+        company_id: UUID,
+        data: CompanyProfileUpdate,
+        if_match: Optional[str] = None,
+        updated_by: Optional[UUID] = None,
+    ) -> CompanyProfile:
+        """Update company profile fields (CEO/HR only) with ETag validation.
+        
+        Based on F4_api_spec.md Section 4.4.7 - PATCH /api/v1/company/profile.
+        ETag logic in service layer per error_prevention.md RULE 19.
+        
+        Note: Only profile fields can be updated. Governance fields (name, slug, is_active, is_deleted) cannot be updated.
+        Updates are blocked when company is inactive (is_active: false).
+        """
+        # Get current company
+        company = await self.repository.get_by_id(company_id)
+        if not company:
+            raise CompanyNotFound(str(company_id))
+
+        # Business rule: Updates are blocked when company is inactive
+        if not company.is_active:
+            raise BusinessRuleFailed("Cannot update company profile when company is inactive (is_active: false)")
+
+        # Generate ETag in service
+        current_etag = generate_etag(company.updated_at)
+
+        # Validate If-Match in service (business logic)
+        if not if_match:
+            raise PreconditionRequired()
+
+        if if_match != current_etag:
+            # Raise exception in service (business logic validation)
+            raise PreconditionFailed()
+
+        # Update company profile fields only (business logic)
+        # Note: Only profile fields are updated, governance fields are ignored
+        updated_company = await self.repository.update(
+            company_id=company_id,
+            description=data.description,
+            address=data.address,
+            city=data.city,
+            state=data.state,
+            country=data.country,
+            postal_code=data.postal_code,
+            website=data.website,
+            logo_url=data.logo_url,
+            is_active=None,  # Governance field, cannot be updated via profile endpoint
+            updated_by=updated_by,
+        )
+
+        if not updated_company:
+            raise CompanyNotFound(str(company_id))
+
+        # Return company profile (excludes governance fields)
+        result = CompanyProfile(
+            name=updated_company.name,
+            slug=updated_company.slug,
+            description=updated_company.description,
+            address=updated_company.address,
+            city=updated_company.city,
+            state=updated_company.state,
+            country=updated_company.country,
+            postal_code=updated_company.postal_code,
+            website=updated_company.website,
+            logo_url=updated_company.logo_url,
+            is_active=updated_company.is_active,
+        )
+        # Attach ETag and Last-Modified to result for router
+        result._etag = generate_etag(updated_company.updated_at)
+        result._last_modified = updated_company.updated_at
+        return result

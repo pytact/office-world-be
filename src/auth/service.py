@@ -89,13 +89,17 @@ class AuthService:
             if not role_assignment.company.is_active:
                 raise CompanyInactive()
 
-        # Get role code
+        # Get role_id for JWT token (role_id is required, should never be None)
+        if not role_assignment.role_id:
+            raise InvalidCredentials("Role assignment missing role_id")
+        
+        role_id = role_assignment.role_id
         role_code = role_assignment.role.code if role_assignment.role else None
 
         # Create JWT token
         token_data = {
             "sub": str(user.id),
-            "role": role_code or "employee",
+            "role_id": str(role_id),
             "company_id": str(role_assignment.company_id) if role_assignment.company_id else None,
         }
         access_token = create_access_token(token_data)

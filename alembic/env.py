@@ -16,12 +16,12 @@ from src.users.models import User
 from src.companies.models import Company
 from src.permissions.models import Role, UserRoleAssignment
 from src.employees.models import Employee  # Required for User.employee relationship
+from src.salaries.models import BankInfo, SalaryDetails, SalaryPayment, SalaryHistory  # F-006 Salary Management
+from src.projects.models import Project  # F-007 Project Management
 # TODO: Import other models when they are implemented:
-# from src.projects.models import Project
 # from src.tasks.models import Task
 # from src.attendance.models import Attendance
 # from src.leaves.models import Leave
-# from src.salaries.models import Salary
 # from src.notifications.models import Notification
 # from src.audits.models import Audit
 # from src.dashboards.models import Dashboard

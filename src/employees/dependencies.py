@@ -12,6 +12,7 @@ from src.auth.dependencies import oauth2_scheme
 from src.auth.utils import decode_token
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
+from src.permissions.models import Role
 from src.employees.service import EmployeeService
 from src.employees.exceptions import SuperAdminNoAccess
 from jose import JWTError
@@ -66,8 +67,18 @@ async def get_current_user_with_company(
         company_id_str = payload.get("org_id") or payload.get("company_id")
         company_id = UUID(company_id_str) if company_id_str else None
         
-        # Extract role from token
-        role = payload.get("role", "").lower()
+        # Extract role_id from token and fetch role from database
+        role_id_str = payload.get("role_id")
+        if not role_id_str:
+            raise InvalidCredentials("role_id is required in token")
+        
+        role_id = UUID(role_id_str)
+        role_obj = await session.get(Role, role_id)
+        if not role_obj:
+            raise InvalidCredentials("Invalid role_id in token")
+        
+        # Get role code from Role object
+        role = role_obj.code.lower()
         
         return user, company_id, role
     except (JWTError, ValueError, TypeError):
@@ -103,15 +114,6 @@ class EmployeeApiDep:
     ):
         """Get employee by ID with role-based field visibility and ETag support."""
         return await self.service.get_employee_by_id(employee_id, company_id, role, if_none_match)
-
-    async def create_employee(
-        self,
-        data,
-        company_id: Optional[UUID],
-        created_by: UUID,
-    ):
-        """Create a new employee."""
-        return await self.service.create_employee(data, company_id, created_by)
 
     async def update_employee(
         self,

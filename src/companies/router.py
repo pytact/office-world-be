@@ -15,12 +15,15 @@ from src.companies.schemas import (
     CompanyListQuery,
     CompanyCreate,
     CompanyUpdate,
+    CompanyProfileUpdate,
     CompanySummary,
     CompanyDetail,
+    CompanyProfile,
     CompanyPaginatedResponse,
 )
 from src.companies.dependencies import (
     CompanyApiDep,
+    get_current_ceo_or_hr,
 )
 from src.users.dependencies import get_current_superadmin
 from src.companies.documentations.companies_api_doc import CompanyApiDocs
@@ -30,9 +33,12 @@ from src.companies.constants import (
     SUCCESS_COMPANY_CREATED,
     SUCCESS_COMPANY_UPDATED,
     SUCCESS_COMPANY_DELETED,
+    SUCCESS_COMPANY_PROFILE_RETRIEVED,
+    SUCCESS_COMPANY_PROFILE_UPDATED,
 )
 from src.companies.utils import format_last_modified
 from src.users.models import User
+from src.users.utils import generate_request_id
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -235,3 +241,96 @@ async def delete_company(
     await api.delete_company(company_id, if_match=if_match)
     
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================================
+# Company Profile Endpoints (CEO/HR only)
+# ============================================================================
+
+profile_router = APIRouter(
+    prefix="/company",
+    tags=["Companies"],
+)
+
+
+@profile_router.get(
+    "/profile",
+    response_model=StandardResponse[CompanyProfile],
+    summary=CompanyApiDocs.get_profile["summary"],
+    description=CompanyApiDocs.get_profile["description"],
+)
+async def get_company_profile(
+    request: Request,
+    api: CompanyApiDep = Depends(CompanyApiDep),
+    user_company: tuple[User, Optional[UUID]] = Depends(get_current_ceo_or_hr),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
+    response: Response = None,
+) -> StandardResponse[CompanyProfile] | FastAPIResponse:
+    """Get own company profile.
+    
+    Based on F4_api_spec.md Section 4.4.6 - GET /api/v1/company/profile.
+    Authorization: CEO, HR only (own company from JWT org_id).
+    ETag logic in service layer per error_prevention.md RULE 19.
+    """
+    request_id = generate_request_id(x_request_id)
+    user, company_id = user_company
+    
+    # Pass header to service (service handles ETag logic)
+    result = await api.get_company_profile(company_id, if_none_match=if_none_match)
+    
+    # If service returned 304, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
+    
+    # Set headers from service result (router sets HTTP headers)
+    if hasattr(result, '_etag'):
+        response.headers["ETag"] = result._etag
+        response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    response.headers["X-Request-ID"] = request_id
+    
+    return StandardResponse(
+        data=result,
+        message=SUCCESS_COMPANY_PROFILE_RETRIEVED,
+    )
+
+
+@profile_router.patch(
+    "/profile",
+    response_model=StandardResponse[CompanyProfile],
+    summary=CompanyApiDocs.update_profile["summary"],
+    description=CompanyApiDocs.update_profile["description"],
+)
+async def update_company_profile(
+    request: Request,
+    update_data: CompanyProfileUpdate,
+    api: CompanyApiDep = Depends(CompanyApiDep),
+    user_company: tuple[User, Optional[UUID]] = Depends(get_current_ceo_or_hr),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
+    response: Response = None,
+) -> StandardResponse[CompanyProfile]:
+    """Update company profile fields.
+    
+    Based on F4_api_spec.md Section 4.4.7 - PATCH /api/v1/company/profile.
+    Authorization: CEO, HR only (own company from JWT org_id, blocked if is_active: false).
+    ETag validation in service layer per error_prevention.md RULE 19.
+    """
+    request_id = generate_request_id(x_request_id)
+    user, company_id = user_company
+    
+    # Pass header to service (service handles validation)
+    result = await api.update_company_profile(
+        company_id, update_data, if_match=if_match, updated_by=user.id
+    )
+    
+    # Set ETag header from service result
+    if hasattr(result, '_etag'):
+        response.headers["ETag"] = result._etag
+    response.headers["X-Request-ID"] = request_id
+    
+    return StandardResponse(
+        data=result,
+        message=SUCCESS_COMPANY_PROFILE_UPDATED,
+    )

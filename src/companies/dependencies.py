@@ -12,21 +12,24 @@ from src.auth.dependencies import oauth2_scheme
 from src.auth.utils import decode_token
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
+from src.permissions.models import Role
 from src.companies.service import CompanyService
+from src.users.exceptions import InsufficientPermissions
 from jose import JWTError
 
 
 async def get_current_user_with_company(
     token: Optional[str] = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_session),
-) -> tuple[User, Optional[UUID]]:
-    """Get current authenticated user and company_id from JWT token.
+) -> tuple[User, Optional[UUID], str]:
+    """Get current authenticated user, company_id, and role from JWT token.
     
-    Returns tuple of (User, company_id) where company_id is:
-    - None for SuperAdmin (company_id is null in token)
-    - UUID for company-scoped users (company_id from token)
+    Returns tuple of (User, company_id, role) where:
+    - company_id is None for SuperAdmin (company_id is null in token)
+    - company_id is UUID for company-scoped users (company_id from token)
+    - role is the user's role from token (superadmin, ceo, hr, manager, employee)
     
-    Based on F3_api_spec.md Section 2.1 - Multi-tenancy from token.
+    Based on F4_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
     from src.auth.utils import is_token_blacklisted
     
@@ -64,9 +67,50 @@ async def get_current_user_with_company(
         company_id_str = payload.get("org_id") or payload.get("company_id")
         company_id = UUID(company_id_str) if company_id_str else None
         
-        return user, company_id
+        # Extract role_id from token and fetch role from database
+        role_id_str = payload.get("role_id")
+        if not role_id_str:
+            raise InvalidCredentials("role_id is required in token")
+        
+        role_id = UUID(role_id_str)
+        role_obj = await session.get(Role, role_id)
+        if not role_obj:
+            raise InvalidCredentials("Invalid role_id in token")
+        
+        # Get role code from Role object
+        role = role_obj.code.lower()
+        
+        return user, company_id, role
     except (JWTError, ValueError, TypeError):
         raise InvalidCredentials()
+
+
+async def get_current_ceo_or_hr(
+    user_company: tuple[User, Optional[UUID], str] = Depends(get_current_user_with_company),
+) -> tuple[User, Optional[UUID]]:
+    """Get current authenticated user and company_id, ensuring role is CEO or HR.
+    
+    Based on F4_api_spec.md Section 3 - Roles & Permissions.
+    Only CEO and HR can access company profile endpoints.
+    SuperAdmin, Employees, and Managers are explicitly denied.
+    
+    Returns tuple of (User, company_id).
+    Raises InsufficientPermissions if user is not CEO or HR, or if company_id is null.
+    """
+    user, company_id, role = user_company
+    
+    # Normalize role to lowercase for comparison
+    role_lower = role.lower() if role else ""
+    
+    # Check if role is allowed (CEO or HR only, not SuperAdmin)
+    if role_lower not in ["ceo", "hr"]:
+        raise InsufficientPermissions()
+    
+    # For profile endpoints, company_id must be present
+    if company_id is None:
+        raise InsufficientPermissions()
+    
+    return user, company_id
 
 
 class CompanyApiDep:
@@ -107,4 +151,20 @@ class CompanyApiDep:
     async def delete_company(self, company_id: UUID, if_match: Optional[str] = None):
         """Delete a company."""
         return await self.service.delete_company(company_id, if_match=if_match)
+
+    async def get_company_profile(self, company_id: UUID, if_none_match: Optional[str] = None):
+        """Get company profile with ETag support."""
+        return await self.service.get_company_profile(company_id, if_none_match=if_none_match)
+
+    async def update_company_profile(
+        self,
+        company_id: UUID,
+        data,
+        if_match: Optional[str] = None,
+        updated_by: Optional[UUID] = None
+    ):
+        """Update company profile with ETag validation."""
+        return await self.service.update_company_profile(
+            company_id, data, if_match=if_match, updated_by=updated_by
+        )
 

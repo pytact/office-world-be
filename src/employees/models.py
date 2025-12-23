@@ -18,6 +18,8 @@ from src.database import Base
 if TYPE_CHECKING:
     from src.users.models import User
     from src.companies.models import Company
+    from src.salaries.models import BankInfo, SalaryDetails, SalaryPayment
+    from src.salaries.models import BankInfo
 
 
 class Employee(Base):
@@ -217,11 +219,24 @@ class Employee(Base):
         foreign_keys=[company_id],
         back_populates="employees",
     )
+    bank_info: Mapped["BankInfo | None"] = relationship(
+        "BankInfo",
+        back_populates="employee",
+        uselist=False,  # One-to-one relationship
+    )
+    salary_details: Mapped[list["SalaryDetails"]] = relationship(
+        "SalaryDetails",
+        back_populates="employee",
+    )
+    salary_payments: Mapped[list["SalaryPayment"]] = relationship(
+        "SalaryPayment",
+        back_populates="employee",
+    )
 
     # Table Constraints
     __table_args__ = (
         CheckConstraint(
-            "employment_status IN ('TRAINEE', 'PROBATION', 'CONFIRMED', 'NOTICE_PERIOD', 'ACTIVE', 'ON_HOLD', 'TERMINATED', 'RESIGNED')",
+            "employment_status IN ('TRAINEE', 'PROBATION', 'CONFIRMED', 'NOTICE_PERIOD', 'ON_HOLD', 'TERMINATED', 'RESIGNED')",
             name="chk_employees_employment_status",
         ),
         CheckConstraint(

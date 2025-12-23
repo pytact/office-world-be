@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, status, Header, Response, Request
 from src.schemas import StandardResponse
 from src.employees.schemas import (
     EmployeeListQuery,
-    EmployeeCreate,
     EmployeeUpdate,
     EmployeeSummary,
     EmployeeDetail,
@@ -25,7 +24,6 @@ from src.employees.documentations.employees_api_doc import EmployeeApiDocs
 from src.employees.constants import (
     SUCCESS_EMPLOYEES_RETRIEVED,
     SUCCESS_EMPLOYEE_RETRIEVED,
-    SUCCESS_EMPLOYEE_CREATED,
     SUCCESS_EMPLOYEE_UPDATED,
     SUCCESS_EMPLOYEE_SOFT_DELETED,
 )
@@ -81,47 +79,6 @@ async def list_employees(
     )
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id
-    return json_response
-
-
-@router.post(
-    "",
-    response_model=StandardResponse[EmployeeDetail],
-    status_code=status.HTTP_201_CREATED,
-    summary=EmployeeApiDocs.create["summary"],
-    description=EmployeeApiDocs.create["description"],
-)
-async def create_employee(
-    request: Request,
-    data: EmployeeCreate,
-    api: EmployeeApiDep = Depends(EmployeeApiDep),
-    user_company_role: tuple[User, Optional[UUID], str] = Depends(get_current_user_with_company),
-    response: Response = None,
-) -> StandardResponse[EmployeeDetail]:
-    """Create a new employee from existing User.
-    
-    Based on F5_api_spec.md Section 5.2 - POST /api/v1/company/employees.
-    Authorization: CEO, HR only (Manager, Employee, SuperAdmin return 403).
-    """
-    request_id = generate_request_id()
-    user, company_id, role = user_company_role
-    
-    # SuperAdmin and non-CEO/HR roles are handled in service layer (raises exception)
-    if company_id is None:
-        # SuperAdmin - will raise SuperAdminNoAccess in service
-        pass
-    
-    result = await api.create_employee(data, company_id, user.id)
-    response_data = StandardResponse(
-        data=result,
-        message=SUCCESS_EMPLOYEE_CREATED,
-    )
-    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
-    json_response.headers["X-Request-ID"] = request_id
-    if hasattr(result, '_etag') and result._etag:
-        json_response.headers["ETag"] = result._etag
-    if hasattr(result, '_last_modified') and result._last_modified:
-        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response
 
 
