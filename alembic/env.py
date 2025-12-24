@@ -19,9 +19,9 @@ from src.employees.models import Employee  # Required for User.employee relation
 from src.salaries.models import BankInfo, SalaryDetails, SalaryPayment, SalaryHistory  # F-006 Salary Management
 from src.projects.models import Project  # F-007 Project Management
 from src.tasks.models import Task, TaskAssignment  # F-008 Task Management
+from src.leaves.models import LeaveRequest  # F-009 Leave Management
 # TODO: Import other models when they are implemented:
 # from src.attendance.models import Attendance
-# from src.leaves.models import Leave
 # from src.notifications.models import Notification
 # from src.audits.models import Audit
 # from src.dashboards.models import Dashboard

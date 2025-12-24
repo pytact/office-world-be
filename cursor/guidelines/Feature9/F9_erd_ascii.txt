@@ -1,0 +1,82 @@
+================================================================================
+                    ENTITY RELATIONSHIP DIAGRAM (ERD)
+                    Feature: F-009 — Leave Management
+                    Crow's Foot Notation (ASCII)
+================================================================================
+
++----------------------+
+|      companies       |
++----------------------+
+| id (PK)              |
++----------------------+
+         |
+         | 1
+         |
+         |
++---------------------------+
+|      leave_requests       |
++---------------------------+
+| id (PK)                   |
+| company_id (FK)            |
+| employee_id (FK)           |
+| manager_approver_id (FK)   |
+| hr_approver_id (FK)        |
++---------------------------+
+         |                    |                    |
+         | M                  | M                  | M
+         |                    |                    |
+         |                    |                    |
++----------------------+     |     +----------------------+
+|      employees       |     |     |      employees       |
+|   (Applicant)        |     |     |  (Manager Approver) |
++----------------------+     |     +----------------------+
+| id (PK)              |     |     | id (PK)              |
++----------------------+     |     +----------------------+
+                              |
+                              |
+                              |
+                    +----------------------+
+                    |      employees       |
+                    |   (HR Approver)      |
+                    +----------------------+
+                    | id (PK)              |
+                    +----------------------+
+
+================================================================================
+                              RELATIONSHIP SUMMARY
+================================================================================
+
+1. companies (1) ────────< (M) leave_requests
+   Relationship: One company can have many leave requests
+   Foreign Key: leave_requests.company_id → companies.id
+   Cardinality: 1 : M
+
+2. employees (1) ────────< (M) leave_requests [Applicant]
+   Relationship: One employee can create many leave requests
+   Foreign Key: leave_requests.employee_id → employees.id
+   Cardinality: 1 : M
+
+3. employees (1) ────────< (M) leave_requests [Manager Approver]
+   Relationship: One manager employee can approve many leave requests
+   Foreign Key: leave_requests.manager_approver_id → employees.id
+   Cardinality: 1 : M
+
+4. employees (1) ────────< (M) leave_requests [HR Approver]
+   Relationship: One HR employee can approve many leave requests
+   Foreign Key: leave_requests.hr_approver_id → employees.id
+   Cardinality: 1 : M
+
+================================================================================
+                              NOTES
+================================================================================
+
+- CEO approval is handled through hr_status field when applicant role is HR
+- No separate CEO approver field exists (CEO acts as final approver via role check)
+- All approvers (Manager, HR, CEO) are employees with different roles
+- Manager and HR approvers are explicitly stored as foreign keys
+- CEO approval is implicit (when hr_status = PENDING_HR and applicant role = HR)
+- The employees table appears multiple times in the diagram to show different
+  relationship roles (applicant, manager approver, HR approver), but it is
+  the same physical table with role-based relationships
+
+================================================================================

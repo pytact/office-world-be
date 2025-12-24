@@ -58,6 +58,7 @@ import src.companies.models  # noqa: F401
 import src.salaries.models  # noqa: F401 - Required for Employee salary relationships
 import src.projects.models  # noqa: F401 - Required for Project relationships
 import src.tasks.models  # noqa: F401 - Required for Task relationships
+import src.leaves.models  # noqa: F401 - Required for LeaveRequest relationships
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

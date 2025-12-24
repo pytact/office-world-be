@@ -1,3 +1,94 @@
-# Domain-specific constants
-# TODO: Add error messages, success messages, status values
+# Error Messages
+ERROR_LEAVE_REQUEST_NOT_FOUND = "Leave request not found"
+ERROR_OVERLAPPING_LEAVE_REQUEST = "Leave request overlaps with existing leave request"
+ERROR_INVALID_WORKING_DAY = "Leave request includes weekend or holiday"
+ERROR_INVALID_APPROVER = "Invalid approver specified"
+ERROR_BUSINESS_RULE_FAILED = "Business rule violation"
+ERROR_INSUFFICIENT_PERMISSIONS = "Insufficient permissions for leave action"
+ERROR_LEAVE_ACTION_NOT_ALLOWED = "Leave action not allowed in current state"
+ERROR_LEAVE_ALREADY_PROCESSED = "Leave request has already been processed"
+ERROR_INVALID_LEAVE_TYPE = "Invalid leave type"
+ERROR_INVALID_DAY_TYPE = "Invalid day type"
+ERROR_INVALID_STATUS = "Invalid status"
+ERROR_INVALID_DATE_RANGE = "Invalid date range"
+ERROR_INVALID_REASON_LENGTH = "Reason must be between 10 and 500 characters"
+ERROR_INVALID_REJECTION_REASON_LENGTH = "Rejection reason must be between 10 and 500 characters"
+
+# Success Messages
+SUCCESS_LEAVE_REQUEST_CREATED = "Leave request created successfully"
+SUCCESS_LEAVE_REQUEST_UPDATED = "Leave request updated successfully"
+SUCCESS_LEAVE_REQUEST_CANCELLED = "Leave request cancelled successfully"
+SUCCESS_LEAVE_REQUEST_APPROVED = "Leave request approved successfully"
+SUCCESS_LEAVE_REQUEST_REJECTED = "Leave request rejected successfully"
+SUCCESS_LEAVE_REQUESTS_RETRIEVED = "Leave requests retrieved successfully"
+SUCCESS_LEAVE_REQUEST_RETRIEVED = "Leave request retrieved successfully"
+
+# Status Values
+STATUS_PENDING_MANAGER = "PENDING_MANAGER"
+STATUS_APPROVED_MANAGER = "APPROVED_MANAGER"
+STATUS_REJECTED_MANAGER = "REJECTED_MANAGER"
+STATUS_PENDING_HR = "PENDING_HR"
+STATUS_APPROVED_HR = "APPROVED_HR"
+STATUS_REJECTED_HR = "REJECTED_HR"
+STATUS_CANCELLED = "CANCELLED"
+
+# Leave Types
+LEAVE_TYPE_CASUAL = "CASUAL"
+LEAVE_TYPE_SICK = "SICK"
+LEAVE_TYPE_PAID = "PAID"
+LEAVE_TYPE_UNPAID = "UNPAID"
+
+# Day Types
+DAY_TYPE_FULL_DAY = "FULL_DAY"
+DAY_TYPE_FIRST_HALF = "FIRST_HALF"
+DAY_TYPE_SECOND_HALF = "SECOND_HALF"
+
+# Actions
+ACTION_APPROVE = "approve"
+ACTION_REJECT = "reject"
+ACTION_CANCEL = "cancel"
+
+# Error Codes
+ERROR_CODE_LEAVE_NOT_FOUND = "LEAVE_REQUEST_NOT_FOUND"
+ERROR_CODE_OVERLAPPING_LEAVE = "OVERLAPPING_LEAVE_REQUEST"
+ERROR_CODE_INVALID_WORKING_DAY = "INVALID_WORKING_DAY"
+ERROR_CODE_INVALID_APPROVER = "INVALID_APPROVER"
+ERROR_CODE_BUSINESS_RULE_FAILED = "BUSINESS_RULE_FAILED"
+ERROR_CODE_INSUFFICIENT_PERMISSIONS = "INSUFFICIENT_PERMISSIONS"
+ERROR_CODE_INVALID_LEAVE_TYPE = "INVALID_LEAVE_TYPE"
+ERROR_CODE_INVALID_DAY_TYPE = "INVALID_DAY_TYPE"
+ERROR_CODE_INVALID_STATUS = "INVALID_STATUS"
+ERROR_CODE_INVALID_DATE_RANGE = "INVALID_DATE_RANGE"
+ERROR_CODE_INVALID_REASON_LENGTH = "INVALID_REASON_LENGTH"
+ERROR_CODE_INVALID_REJECTION_REASON_LENGTH = "INVALID_REJECTION_REASON_LENGTH"
+
+# Workflow Constants
+WORKFLOW_ROLES = {
+    "EMPLOYEE": ["employee"],
+    "MANAGER": ["manager"],
+    "HR": ["hr"],
+    "CEO": ["ceo"],
+    "SUPERADMIN": ["superadmin"]
+}
+
+# Approval Chain
+APPROVAL_CHAIN = {
+    "EMPLOYEE": ["MANAGER", "HR"],
+    "MANAGER": ["HR"],
+    "HR": ["CEO"]
+}
+
+# Pagination Defaults
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+
+# Sorting Options
+SORT_FIELDS = ["created_at", "updated_at", "start_date", "end_date"]
+SORT_ORDERS = ["asc", "desc"]
+
+# Date Validation
+MIN_REASON_LENGTH = 10
+MAX_REASON_LENGTH = 500
+MIN_REJECTION_REASON_LENGTH = 10
+MAX_REJECTION_REASON_LENGTH = 500
 

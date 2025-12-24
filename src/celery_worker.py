@@ -217,7 +217,7 @@ def send_password_reset_email(user_email: str, reset_token: str, reset_url: str 
     """Send password reset email."""
     try:
         print(f"[CELERY TASK] send_password_reset_email called for {user_email}")
-        
+
         # Build reset URL if not provided
         if not reset_url:
             # Use frontend_url from settings if available
@@ -265,15 +265,242 @@ If you did not request this password reset, please ignore this email and your pa
             html_content=html_content,
             text_content=text_content,
         )
-        
+
         if result:
             print(f"[CELERY TASK] Password reset email sent successfully to {user_email}")
         else:
             print(f"[CELERY TASK] Failed to send password reset email to {user_email}")
-            
+
         return result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_password_reset_email: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+# Leave Management Notification Tasks (F9_api_spec.md Section 5.1)
+
+@celery_app.task(name="send_leave_created_notification")
+def send_leave_created_notification(
+    manager_email: str,
+    manager_name: str,
+    applicant_name: str,
+    leave_type: str,
+    start_date: str,
+    end_date: str,
+    company_name: str,
+):
+    """Send notification when leave request is created (to manager approver)."""
+    try:
+        print(f"[CELERY TASK] send_leave_created_notification to {manager_email}")
+
+        # Load template (reuse invitation template structure or create leave-specific)
+        html_content = f"""
+        <html>
+        <body>
+        <h2>New Leave Request Submitted</h2>
+        <p>Hello {manager_name},</p>
+        <p>A new leave request has been submitted for your approval:</p>
+        <ul>
+        <li><strong>Applicant:</strong> {applicant_name}</li>
+        <li><strong>Leave Type:</strong> {leave_type}</li>
+        <li><strong>Duration:</strong> {start_date} to {end_date}</li>
+        <li><strong>Company:</strong> {company_name}</li>
+        </ul>
+        <p>Please review and approve/reject the leave request in the system.</p>
+        <p>Best regards,<br>The {company_name} Team</p>
+        </body>
+        </html>
+        """
+
+        # Create text version
+        text_content = f"""New Leave Request Submitted
+
+Hello {manager_name},
+
+A new leave request has been submitted for your approval:
+
+Applicant: {applicant_name}
+Leave Type: {leave_type}
+Duration: {start_date} to {end_date}
+Company: {company_name}
+
+Please review and approve/reject the leave request in the system.
+
+Best regards,
+The {company_name} Team
+"""
+
+        # Send email
+        subject = f"New Leave Request from {applicant_name}"
+        result = send_email_smtp(
+            to_email=manager_email,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
+        )
+
+        if result:
+            print(f"[CELERY TASK] Leave created notification sent to {manager_email}")
+        else:
+            print(f"[CELERY TASK] Failed to send leave created notification to {manager_email}")
+
+        return result
+    except Exception as e:
+        print(f"[CELERY TASK ERROR] Error in send_leave_created_notification: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+@celery_app.task(name="send_leave_approved_notification")
+def send_leave_approved_notification(
+    recipient_email: str,
+    recipient_name: str,
+    applicant_name: str,
+    leave_type: str,
+    start_date: str,
+    end_date: str,
+    approved_by: str,
+    company_name: str,
+    approval_stage: str,
+):
+    """Send notification when leave request is approved."""
+    try:
+        print(f"[CELERY TASK] send_leave_approved_notification to {recipient_email}")
+
+        html_content = f"""
+        <html>
+        <body>
+        <h2>Leave Request Approved</h2>
+        <p>Hello {recipient_name},</p>
+        <p>A leave request has been approved:</p>
+        <ul>
+        <li><strong>Applicant:</strong> {applicant_name}</li>
+        <li><strong>Leave Type:</strong> {leave_type}</li>
+        <li><strong>Duration:</strong> {start_date} to {end_date}</li>
+        <li><strong>Approved By:</strong> {approved_by}</li>
+        <li><strong>Approval Stage:</strong> {approval_stage}</li>
+        <li><strong>Company:</strong> {company_name}</li>
+        </ul>
+        <p>The leave request is now active.</p>
+        <p>Best regards,<br>The {company_name} Team</p>
+        </body>
+        </html>
+        """
+
+        text_content = f"""Leave Request Approved
+
+Hello {recipient_name},
+
+A leave request has been approved:
+
+Applicant: {applicant_name}
+Leave Type: {leave_type}
+Duration: {start_date} to {end_date}
+Approved By: {approved_by}
+Approval Stage: {approval_stage}
+Company: {company_name}
+
+The leave request is now active.
+
+Best regards,
+The {company_name} Team
+"""
+
+        subject = f"Leave Request Approved for {applicant_name}"
+        result = send_email_smtp(
+            to_email=recipient_email,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
+        )
+
+        if result:
+            print(f"[CELERY TASK] Leave approved notification sent to {recipient_email}")
+        else:
+            print(f"[CELERY TASK] Failed to send leave approved notification to {recipient_email}")
+
+        return result
+    except Exception as e:
+        print(f"[CELERY TASK ERROR] Error in send_leave_approved_notification: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+@celery_app.task(name="send_leave_rejected_notification")
+def send_leave_rejected_notification(
+    applicant_email: str,
+    applicant_name: str,
+    leave_type: str,
+    start_date: str,
+    end_date: str,
+    rejected_by: str,
+    rejection_reason: str,
+    company_name: str,
+    rejection_stage: str,
+):
+    """Send notification when leave request is rejected."""
+    try:
+        print(f"[CELERY TASK] send_leave_rejected_notification to {applicant_email}")
+
+        html_content = f"""
+        <html>
+        <body>
+        <h2>Leave Request Rejected</h2>
+        <p>Hello {applicant_name},</p>
+        <p>Your leave request has been rejected:</p>
+        <ul>
+        <li><strong>Leave Type:</strong> {leave_type}</li>
+        <li><strong>Requested Duration:</strong> {start_date} to {end_date}</li>
+        <li><strong>Rejected By:</strong> {rejected_by}</li>
+        <li><strong>Rejection Stage:</strong> {rejection_stage}</li>
+        <li><strong>Reason:</strong> {rejection_reason}</li>
+        <li><strong>Company:</strong> {company_name}</li>
+        </ul>
+        <p>You can submit a new leave request or contact your manager for more information.</p>
+        <p>Best regards,<br>The {company_name} Team</p>
+        </body>
+        </html>
+        """
+
+        text_content = f"""Leave Request Rejected
+
+Hello {applicant_name},
+
+Your leave request has been rejected:
+
+Leave Type: {leave_type}
+Requested Duration: {start_date} to {end_date}
+Rejected By: {rejected_by}
+Rejection Stage: {rejection_stage}
+Reason: {rejection_reason}
+Company: {company_name}
+
+You can submit a new leave request or contact your manager for more information.
+
+Best regards,
+The {company_name} Team
+"""
+
+        subject = "Leave Request Rejected"
+        result = send_email_smtp(
+            to_email=applicant_email,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
+        )
+
+        if result:
+            print(f"[CELERY TASK] Leave rejected notification sent to {applicant_email}")
+        else:
+            print(f"[CELERY TASK] Failed to send leave rejected notification to {applicant_email}")
+
+        return result
+    except Exception as e:
+        print(f"[CELERY TASK ERROR] Error in send_leave_rejected_notification: {str(e)}")
         import traceback
         traceback.print_exc()
         raise
