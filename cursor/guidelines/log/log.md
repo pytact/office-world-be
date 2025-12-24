@@ -1,138 +1,134 @@
-# Domain Flow Log – Office world
+# Domain Flow Log — OfficeWorld
 
-**Prepared By:** Ravi 
+**Project Name:** OfficeWorld
+**Prepared By:** Ravi
 **Reviewed By:** Shahid
-**Date:** 2025-01-23  
+**Issue Date:** 2025-01-23
 
-Identified Issues & Feedback
 
-Issue 1 — Incorrect Order of Domain Files
+## Summary of Identified Issues
 
-Observation:
-The order of domain files is not aligned with implementation priorities.
+1. Incorrect order of domain files
+2. Incomplete domain file content
+3. Improper domain modeling (missing / unnecessary fields)
+4. Missing base domain information
+5. Missing explanation of real-world working & examples
 
-Details:
 
-Core domains such as Employee and Salary appear late in the sequence
+## Issue 1 — Incorrect Order of Domain Files
 
-Secondary domains like Notifications appear earlier, even though they are not required in initial phases
+### Observation
 
-Impact:
+The current order of domain files does not reflect **implementation priority or dependency flow**.
 
-Creates confusion during development
+### Details
 
-Slows down API and DB design
+* Core business domains (e.g., **Employee**, **Salary**) appear later in the sequence
+* Secondary or supporting domains (e.g., **Notifications**) appear earlier
+* Initial development phases are forced to reference undefined core concepts
 
-Breaks logical dependency flow
 
-Expected Correction:
-Reorder domain files so that core business entities and workflows are defined first, followed by supporting or auxiliary domains.
+## Issue 2 — Incomplete Domain File Content
 
-Issue 2 — Incomplete Domain File Content
+### Observation
 
-Observation:
-Several sections in the domain files are incomplete.
+Several domain sections are **partially written or left unfinished**.
 
-Details:
+### Details
 
-Multiple descriptions appear unfinished
+* Descriptions stop mid-way
+* Business flows are incomplete
+* Context is missing for actions and states
 
-Some business flows stop mid-way
 
-Context is missing in several places
+## Issue 3 — Improper Domain Modeling
 
-Impact:
+### Observation
 
-Requires repeated clarification from reviewers
+Some entities contain either **missing required fields** or **unnecessary fields**.
 
-Blocks downstream design (API, DB, UI)
+### Details
 
-Expected Correction:
-Ensure every domain section is fully developed, including:
+* Business-critical fields are absent in some entities
+* Certain fields have no clear domain purpose
+* Domain intent is unclear or inconsistent
 
-Purpose
 
-Entity description
+## Issue 4 — Missing Base Domain Information
 
-Business rules
+### Observation
 
-Lifecycle behavior
+Essential system-level information is missing from domain files.
 
-Issue 3 — Improper Domain Modeling
+### Problem
 
-Observation:
-Some fields are either missing or unnecessarily included.
+This information is repeatedly requested during reviews, causing unnecessary delays.
 
-Details:
-
-Required fields are absent in certain entities
-
-Some fields have no clear business purpose
-
-Domain intent is unclear in multiple places
-
-Impact:
-
-Risk of incorrect database schema
-
-Confusing API contracts
-
-Increased refactoring later
-
-Expected Correction:
-
-Remove unused or unjustified fields
-
-Add missing fields required for business logic
-
-Ensure every field has a clear domain purpose
-
-Issue 4 — Missing Base Domain Information
-
-Observation:
-Essential system-level information is missing from the domain file.
-
-Problem:
-This information is repeatedly requested during reviews and discussions.
-
-Required Addition (Must Be Included in Domain File):
+### Details
+Every domain file **must begin** with the following section:
 
 ## Base Domain Information
 
 1. **Project Name:** OfficeWorld
 
-2. **System Purpose:**  
+2. **Project Purpose:**
    Multi-tenant SaaS platform enabling invitation-based user onboarding with
    strict role-based access control, company boundaries, and lifecycle
    management for users across tenant organizations.
 
-3. **Domain Model Document Available:**  
-   Yes — `F2_domain_model.md` contains field-level details.
-
-4. **Key Entities:**  
+3. **Key Entities:**
    Feature F-002 introduces no new persisted entities.
 
-5. **User Roles:**  
+4. **User Roles:**
    SuperAdmin, CEO, HR, Manager, Employee
 
-6. **Multi-Tenancy:**  
+5. **Multi-Tenancy:**
    Yes — Company is the tenant boundary.
 
-7. **Soft Delete Policy:**  
+6. **Soft Delete Policy:**
    Enabled for all applicable entities.
 
-8. **Audit Requirements:**  
+7. **Audit Requirements:**
    Required — audit logging must be added for relevant actions.
 
-9. **Special Requirements:**  
+8. **Special Requirements:**
    None.
 
+---
 
-Impact:
+### Impact of Adding This Section
+
 Including this section ensures:
 
-Zero repeated clarification
+* Zero repeated clarification
+* Faster and smoother reviews
+* Clear shared understanding across the team
+* Better AI-assisted development accuracy
 
-Faster reviews
+---
 
-Clear shared understanding across the team
+## Issue 5 — Missing Explanation of Real-World Working
+
+### Observation
+
+Domain files currently focus on **structure**, but not on **actual working behavior**.
+
+### Problem
+
+* Developers struggle to understand what exactly needs to be built
+* Cursor and other AI tools lack behavioral context
+* Implementation assumptions vary between developers
+
+### Expected Correction
+
+Each domain file **must explain how the feature works in practice**, including:
+
+* Step-by-step flow of key actions
+* Real-world usage examples
+* State transitions
+* Validation and failure scenarios
+
+
+
+
+

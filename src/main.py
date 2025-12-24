@@ -56,6 +56,8 @@ import src.employees.models  # noqa: F401 - Required for User.employee relations
 import src.permissions.models  # noqa: F401
 import src.companies.models  # noqa: F401
 import src.salaries.models  # noqa: F401 - Required for Employee salary relationships
+import src.projects.models  # noqa: F401 - Required for Project relationships
+import src.tasks.models  # noqa: F401 - Required for Task relationships
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
