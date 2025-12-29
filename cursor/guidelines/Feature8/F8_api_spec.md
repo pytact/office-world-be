@@ -11,7 +11,8 @@ This API specification defines the RESTful endpoints for the Task Management & A
 - Role-based visibility: CEO/Manager see all tasks; HR sees all (read-only); Employees see own/assigned tasks
 - Task status lifecycle management (TODO, IN_PROGRESS, HALT, REVIEW, DONE, CANCELLED)
 - Optional project linkage (tasks do not inherit project visibility)
-- Hard deletion (permanent removal with IsDeleted marker)
+- Hard deletion (permanent removal with is_deleted marker)
+- **Consolidated update endpoint**: Single PATCH endpoint handles name, description, status, and assignment updates with field-specific authorization
 
 **Feature Dependencies:**
 - F-002 — RBAC & Permission Engine
@@ -111,7 +112,7 @@ All API endpoints require JWT Bearer token authentication.
 **Access Scope:** Full control over all company tasks
 **Capabilities:**
 - Can create, view, edit, and delete all company tasks
-- Can change status only for tasks they own (per domain model: only owner can change status)
+- Can change status for tasks they own or are assigned to as editor
 - Can manage assignments for any company task
 - Can view all tasks in the company (no filtering)
 
@@ -119,7 +120,7 @@ All API endpoints require JWT Bearer token authentication.
 **Access Scope:** Full control over all company tasks
 **Capabilities:**
 - Can create, view, edit, and delete all company tasks
-- Can change status only for tasks they own (per domain model: only owner can change status)
+- Can change status for tasks they own or are assigned to as editor
 - Can manage assignments for any company task
 - Can view all tasks in the company (no filtering)
 
@@ -137,7 +138,7 @@ All API endpoints require JWT Bearer token authentication.
 - Can create tasks (becomes owner)
 - Can view, edit, and delete tasks they own
 - Can view tasks they are assigned to (based on TaskAssignment)
-- Can change status only for tasks they own
+- Can change status for tasks they own or are assigned to as editor
 - Can manage assignments only for tasks they own
 - Cannot view tasks outside ownership or assignment
 
@@ -150,10 +151,9 @@ All API endpoints require JWT Bearer token authentication.
 
 **Assignment Permissions:**
 - **VIEWER**: Can view task only (read-only access)
-- **EDITOR**: Can edit task name and description only
+- **EDITOR**: Can edit task name, description, and change task status
   - Editors ❌ cannot:
     - Add/remove assignees
-    - Change task status
     - Remove themselves
     - Delete the task
 
@@ -161,7 +161,7 @@ All API endpoints require JWT Bearer token authentication.
 - `is_owner` (boolean): True if authenticated user is task owner
 - `user_permission` (enum): OWNER | EDITOR | VIEWER (derived from ownership and TaskAssignment)
 - `can_edit_task` (boolean): True if owner or editor
-- `can_change_status` (boolean): True if owner only
+- `can_change_status` (boolean): True if owner or editor
 - `can_manage_assignments` (boolean): True if owner only
 - `is_task_read_only` (boolean): True if task is in terminal state (DONE, CANCELLED) or user is VIEWER
 
@@ -214,12 +214,15 @@ Represents assignment of an employee to a task with a specific permission level.
 | Method | Path | Purpose | Auth | Roles |
 |--------|------|---------|------|-------|
 | GET | `/api/v1/company/tasks` | List tasks with pagination and filtering | Required | CEO, Manager, HR (read-only), Employee |
-| POST | `/api/v1/company/tasks` | Create new task | Required | CEO, Manager, Employee |
+| POST | `/api/v1/company/tasks` | Create new task with optional initial assignments | Required | CEO, Manager, Employee |
 | GET | `/api/v1/company/tasks/{task_id}` | Get task details | Required | Based on visibility rules |
-| PATCH | `/api/v1/company/tasks/{task_id}` | Update task name and description | Required | Owner, Editor |
-| PATCH | `/api/v1/company/tasks/{task_id}/status` | Change task status | Required | Owner only |
-| PATCH | `/api/v1/company/tasks/{task_id}/assignments` | Update task assignments | Required | Owner only |
+| PATCH | `/api/v1/company/tasks/{task_id}` | Update task (name, description, status, assignments) | Required | Owner, Editor (name/desc only), CEO, Manager |
 | DELETE | `/api/v1/company/tasks/{task_id}` | Hard delete task | Required | Owner, CEO, Manager |
+
+**Note:** The PATCH endpoint is consolidated - it can update name, description, status, and/or assignments in a single request. Authorization is field-specific:
+- **Name/Description**: Owner, Editor, CEO, Manager
+- **Status**: Owner, Editor
+- **Assignments**: Owner, CEO, Manager
 
 ### 4.3 Endpoint Details
 
@@ -301,6 +304,13 @@ None
           "id": "880e8400-e29b-41d4-a716-446655440002",
           "name": "Q1 Bug Fixes"
         },
+        "assignments": [
+          {
+            "id": "dd0e8400-e29b-41d4-a716-446655440007",
+            "employee_id": "990e8400-e29b-41d4-a716-446655440003",
+            "permission": "EDITOR"
+          }
+        ],
         "is_owner": true,
         "user_permission": "OWNER",
         "can_edit_task": true,
@@ -369,6 +379,14 @@ None
 | description | string | No | Task details | Max 5000 characters |
 | status | string | No | Initial task status | Enum: "TODO" (default), must be TODO if provided |
 | project_id | string (UUID) | No | Optional project linkage | RFC 4122 UUID v4 format, must reference ACTIVE project |
+| assignments | array | No | Optional list of initial assignments | Array of assignment objects (employee_id, permission). Creator is always the owner. |
+
+**Assignment Object (for assignments array):**
+
+| Field | Type | Required | Description | Validation |
+|-------|------|----------|-------------|------------|
+| employee_id | string (UUID) | Yes | Employee to assign | RFC 4122 UUID v4 format, must be employee in same company |
+| permission | string | Yes | Assignment permission | Enum: "VIEWER", "EDITOR" (case-sensitive) |
 
 **Request Body Example:**
 ```json
@@ -376,7 +394,17 @@ None
   "name": "Fix login bug",
   "description": "Users are unable to log in with their credentials. Need to investigate and fix authentication flow.",
   "status": "TODO",
-  "project_id": "880e8400-e29b-41d4-a716-446655440002"
+  "project_id": "880e8400-e29b-41d4-a716-446655440002",
+  "assignments": [
+    {
+      "employee_id": "990e8400-e29b-41d4-a716-446655440003",
+      "permission": "EDITOR"
+    },
+    {
+      "employee_id": "aa0e8400-e29b-41d4-a716-446655440004",
+      "permission": "VIEWER"
+    }
+  ]
 }
 ```
 
@@ -386,6 +414,8 @@ None
 - Initial status must be TODO (cannot create task with other statuses)
 - Project ID must reference an ACTIVE project (if provided)
 - If project_id is provided but project is INACTIVE or COMPLETED, return 422 error
+- Assignments array is optional - task can be created without initial assignments
+- The creator is always the owner and does not need to be included in assignments
 
 **Success Response (201 Created)**
 
@@ -509,10 +539,12 @@ None
     },
     "assignments": [
       {
+        "id": "dd0e8400-e29b-41d4-a716-446655440007",
         "employee_id": "990e8400-e29b-41d4-a716-446655440003",
         "permission": "EDITOR"
       },
       {
+        "id": "ee0e8400-e29b-41d4-a716-446655440008",
         "employee_id": "aa0e8400-e29b-41d4-a716-446655440004",
         "permission": "VIEWER"
       }
@@ -564,9 +596,12 @@ Example error (403 Forbidden):
 
 #### 4.3.4 PATCH /api/v1/company/tasks/{task_id}
 
-- **Purpose:** Update task name and description (owner and editors can edit)
+- **Purpose:** Update task details (name, description, status, and/or assignments)
 - **Authentication:** Required (JWT Bearer token)
-- **Authorization / Roles:** Owner or Editor (permission-based)
+- **Authorization / Roles:** Field-specific permissions:
+  - **Name/Description**: Owner, Editor, CEO, Manager
+  - **Status**: Owner, Editor
+  - **Assignments**: Owner, CEO, Manager
 - **Headers:**
   - **Request Headers:**
     - `Authorization: Bearer <token>` (REQUIRED)
@@ -591,24 +626,64 @@ None
 |-------|------|----------|-------------|------------|
 | name | string | No | Task title | Min 1 character, max 255 characters (if provided) |
 | description | string | No | Task details | Max 5000 characters (if provided) |
+| status | string | No | New task status | Enum: "TODO", "IN_PROGRESS", "HALT", "REVIEW", "DONE", "CANCELLED" |
+| assignments | object | No | Assignment updates | Object with `add` and/or `remove` arrays |
+
+**Assignments Object Structure:**
+
+| Field | Type | Required | Description | Validation |
+|-------|------|----------|-------------|------------|
+| add | array | No | Assignments to add | Array of assignment objects (employee_id, permission) |
+| remove | array | No | Assignments to remove | Array of remove objects (employee_id only) |
+
+**Assignment Object (for add array):**
+
+| Field | Type | Required | Description | Validation |
+|-------|------|----------|-------------|------------|
+| employee_id | string (UUID) | Yes | Employee to assign | RFC 4122 UUID v4 format, must be employee in same company |
+| permission | string | Yes | Assignment permission | Enum: "VIEWER", "EDITOR" (case-sensitive) |
+
+**Remove Object (for remove array):**
+
+| Field | Type | Required | Description | Validation |
+|-------|------|----------|-------------|------------|
+| employee_id | string (UUID) | Yes | Employee to unassign | RFC 4122 UUID v4 format, must be existing assignment |
 
 **Request Body Example:**
 ```json
 {
   "name": "Fix login bug - Updated",
-  "description": "Users are unable to log in with their credentials. Need to investigate and fix authentication flow. Priority: High."
+  "description": "Users are unable to log in with their credentials. Need to investigate and fix authentication flow. Priority: High.",
+  "status": "IN_PROGRESS",
+  "assignments": {
+    "add": [
+      {
+        "employee_id": "cc0e8400-e29b-41d4-a716-446655440006",
+        "permission": "VIEWER"
+      }
+    ],
+    "remove": [
+      {
+        "employee_id": "bb0e8400-e29b-41d4-a716-446655440005"
+      }
+    ]
+  }
 }
 ```
 
 **Note:** 
 - Partial update supported (only provided fields are updated)
-- Owner can update name and description
-- Editor can update name and description (permission-based)
-- Viewer cannot update (403 error)
-- Cannot update status via this endpoint (use PATCH /status endpoint)
-- Cannot update assignments via this endpoint (use PATCH /assignments endpoint)
+- All fields are optional - update only what is needed
+- **Name/Description**: Owner, Editor, CEO, and Manager can update
+- **Status**: Owner and Editor can update (403 error for others)
+- **Assignments**: Only owner, CEO, and Manager can update (403 error for others)
+- Viewer cannot update anything (403 error)
 - Tasks in terminal states (DONE, CANCELLED) are read-only (422 error)
 - Tasks linked to INACTIVE or COMPLETED projects may have restrictions (422 error)
+- Cannot add duplicate assignment (employee already assigned) - return 409 error
+- Cannot remove non-existent assignment - return 404 error
+- Editors cannot remove themselves (business rule enforced)
+- Owner cannot remove themselves (must remain owner)
 
 **Success Response (200 OK)**
 
@@ -626,7 +701,30 @@ None
     "created_at": "2024-01-20T10:00:00Z",
     "updated_at": "2024-01-20T16:00:00Z",
     "created_by": "550e8400-e29b-41d4-a716-446655440000",
-    "updated_by": "550e8400-e29b-41d4-a716-446655440000"
+    "updated_by": "550e8400-e29b-41d4-a716-446655440000",
+    "project": {
+      "id": "880e8400-e29b-41d4-a716-446655440002",
+      "name": "Q1 Bug Fixes",
+      "status": "ACTIVE"
+    },
+    "assignments": [
+      {
+        "id": "dd0e8400-e29b-41d4-a716-446655440007",
+        "employee_id": "990e8400-e29b-41d4-a716-446655440003",
+        "permission": "EDITOR"
+      },
+      {
+        "id": "ff0e8400-e29b-41d4-a716-446655440009",
+        "employee_id": "cc0e8400-e29b-41d4-a716-446655440006",
+        "permission": "VIEWER"
+      }
+    ],
+    "is_owner": true,
+    "user_permission": "OWNER",
+    "can_edit_task": true,
+    "can_change_status": true,
+    "can_manage_assignments": true,
+    "is_task_read_only": false
   },
   "message": "Task updated successfully"
 }
@@ -640,16 +738,20 @@ None
 
 | HTTP Status | Error Code | When |
 |-------------|------------|------|
-| 400 | VALIDATION_FAILED | Invalid request body format |
+| 400 | VALIDATION_FAILED | Invalid request body format or both add/remove are empty |
 | 401 | UNAUTHENTICATED | Missing or invalid authentication token |
 | 401 | TOKEN_EXPIRED | JWT token has expired |
 | 401 | INVALID_TOKEN | Malformed token or missing required claims |
-| 403 | INSUFFICIENT_PERMISSIONS | User is VIEWER or not owner/assignee |
+| 403 | INSUFFICIENT_PERMISSIONS | User lacks permission for requested update (field-specific) |
 | 404 | TASK_NOT_FOUND | Task does not exist or is deleted |
+| 404 | ASSIGNMENT_NOT_FOUND | Employee ID in remove array is not assigned to task |
+| 404 | EMPLOYEE_NOT_FOUND | Employee ID does not exist or is not in same company |
+| 409 | DUPLICATE_ASSIGNMENT | Employee ID in add array is already assigned to task |
 | 412 | PRECONDITION_FAILED | ETag mismatch (If-Match header does not match current resource version) |
-| 422 | VALIDATION_ERROR | Field validation failed (name length, description length) |
+| 422 | VALIDATION_ERROR | Field validation failed (name length, description length, invalid status/permission) |
 | 422 | BUSINESS_RULE_FAILED | Task is in terminal state (DONE, CANCELLED) - read-only |
 | 422 | BUSINESS_RULE_FAILED | Task linked to INACTIVE or COMPLETED project - cannot edit |
+| 422 | BUSINESS_RULE_FAILED | Editor attempting to remove themselves (not allowed) |
 
 Example error (412 Precondition Failed - ETag mismatch):
 ```json
@@ -679,249 +781,7 @@ Example error (422 Unprocessable Entity - Terminal State):
 
 ---
 
-#### 4.3.5 PATCH /api/v1/company/tasks/{task_id}/status
-
-- **Purpose:** Change task status (owner only)
-- **Authentication:** Required (JWT Bearer token)
-- **Authorization / Roles:** Owner only
-- **Headers:**
-  - **Request Headers:**
-    - `Authorization: Bearer <token>` (REQUIRED)
-    - `If-Match: "20240120T103000Z"` (REQUIRED - ETag from GET response, based on `updated_at`, see Rule 8)
-  - **Response Headers (REQUIRED):**
-    - `X-Request-ID: req_abc123xyz789` (REQUIRED - unique request identifier for debugging)
-    - `ETag: "20240120T103500Z"` (New ETag after update, based on new `updated_at`)
-- **Idempotency:** Yes (with same ETag and status)
-
-**Path Parameters**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| task_id | string (UUID) | Yes | Task identifier (RFC 4122 UUID v4 format) |
-
-**Query Parameters**  
-None
-
-**Request Body**
-
-| Field | Type | Required | Description | Validation |
-|-------|------|----------|-------------|------------|
-| status | string | Yes | New task status | Enum: "TODO", "IN_PROGRESS", "HALT", "REVIEW", "DONE", "CANCELLED" (case-sensitive) |
-
-**Request Body Example:**
-```json
-{
-  "status": "DONE"
-}
-```
-
-**Note:** 
-- Only task owner can change status
-- Owner can move task to any status at any time
-- DONE and CANCELLED are terminal states (task becomes read-only after reaching these states)
-- Editors cannot change status (403 error)
-- Viewers cannot change status (403 error)
-
-**Success Response (200 OK)**
-
-```json
-{
-  "data": {
-    "task_id": "770e8400-e29b-41d4-a716-446655440001",
-    "company_id": "660e8400-e29b-41d4-a716-446655440001",
-    "owner_id": "550e8400-e29b-41d4-a716-446655440000",
-    "name": "Fix login bug",
-    "description": "Users are unable to log in with their credentials.",
-    "status": "DONE",
-    "project_id": "880e8400-e29b-41d4-a716-446655440002",
-    "is_deleted": false,
-    "created_at": "2024-01-20T10:00:00Z",
-    "updated_at": "2024-01-20T16:30:00Z",
-    "created_by": "550e8400-e29b-41d4-a716-446655440000",
-    "updated_by": "550e8400-e29b-41d4-a716-446655440000"
-  },
-  "message": "Task status updated successfully"
-}
-```
-
-**Response Headers:**
-- `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
-- `ETag: "20240120T103500Z"` (New ETag after update, based on new `updated_at`)
-
-**Error Responses**
-
-| HTTP Status | Error Code | When |
-|-------------|------------|------|
-| 400 | VALIDATION_FAILED | Invalid request body format |
-| 401 | UNAUTHENTICATED | Missing or invalid authentication token |
-| 401 | TOKEN_EXPIRED | JWT token has expired |
-| 401 | INVALID_TOKEN | Malformed token or missing required claims |
-| 403 | INSUFFICIENT_PERMISSIONS | User is not task owner (Editor/Viewer cannot change status) |
-| 404 | TASK_NOT_FOUND | Task does not exist or is deleted |
-| 412 | PRECONDITION_FAILED | ETag mismatch (If-Match header does not match current resource version) |
-| 422 | VALIDATION_ERROR | Invalid status enum value |
-
-Example error (403 Forbidden - Not Owner):
-```json
-{
-  "error": {
-    "code": "INSUFFICIENT_PERMISSIONS",
-    "details": [
-      {"field": "status", "issue": "Only the task owner can change task status. You are assigned as EDITOR and do not have permission to change status."}
-    ]
-  },
-  "message": "Insufficient permissions to change task status."
-}
-```
-
----
-
-#### 4.3.6 PATCH /api/v1/company/tasks/{task_id}/assignments
-
-- **Purpose:** Add or remove task assignments (owner only)
-- **Authentication:** Required (JWT Bearer token)
-- **Authorization / Roles:** Owner only
-- **Headers:**
-  - **Request Headers:**
-    - `Authorization: Bearer <token>` (REQUIRED)
-    - `If-Match: "20240120T103000Z"` (REQUIRED - ETag from GET response, based on `updated_at`, see Rule 8)
-  - **Response Headers (REQUIRED):**
-    - `X-Request-ID: req_abc123xyz789` (REQUIRED - unique request identifier for debugging)
-    - `ETag: "20240120T103500Z"` (New ETag after update, based on new `updated_at`)
-- **Idempotency:** Yes (with same ETag and assignments)
-
-**Path Parameters**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| task_id | string (UUID) | Yes | Task identifier (RFC 4122 UUID v4 format) |
-
-**Query Parameters**  
-None
-
-**Request Body**
-
-| Field | Type | Required | Description | Validation |
-|-------|------|----------|-------------|------------|
-| add | array | No | Assignments to add | Array of assignment objects (employee_id, permission) |
-| remove | array | No | Assignments to remove | Array of employee_id objects |
-
-**Assignment Object (for add):**
-
-| Field | Type | Required | Description | Validation |
-|-------|------|----------|-------------|------------|
-| employee_id | string (UUID) | Yes | Employee to assign | RFC 4122 UUID v4 format, must be employee in same company |
-| permission | string | Yes | Assignment permission | Enum: "VIEWER", "EDITOR" (case-sensitive) |
-
-**Remove Object:**
-
-| Field | Type | Required | Description | Validation |
-|-------|------|----------|-------------|------------|
-| employee_id | string (UUID) | Yes | Employee to unassign | RFC 4122 UUID v4 format, must be existing assignment |
-
-**Request Body Example:**
-```json
-{
-  "add": [
-    {
-      "employee_id": "990e8400-e29b-41d4-a716-446655440003",
-      "permission": "EDITOR"
-    },
-    {
-      "employee_id": "aa0e8400-e29b-41d4-a716-446655440004",
-      "permission": "VIEWER"
-    }
-  ],
-  "remove": [
-    {
-      "employee_id": "bb0e8400-e29b-41d4-a716-446655440005"
-    }
-  ]
-}
-```
-
-**Note:** 
-- Only task owner can manage assignments
-- At least one of `add` or `remove` must be provided (cannot be both empty/omitted)
-- Empty arrays `[]` are allowed if only one operation is needed
-- Can add and remove assignments in the same request
-- Cannot add duplicate assignment (employee already assigned) - return 409 error
-- Cannot remove non-existent assignment - return 404 error
-- Editors cannot remove themselves (business rule enforced)
-- Owner cannot remove themselves (must remain owner)
-- Employee must be in same company (validation)
-
-**Success Response (200 OK)**
-
-```json
-{
-  "data": {
-    "task_id": "770e8400-e29b-41d4-a716-446655440001",
-    "assignments": [
-      {
-        "employee_id": "990e8400-e29b-41d4-a716-446655440003",
-        "permission": "EDITOR"
-      },
-      {
-        "employee_id": "aa0e8400-e29b-41d4-a716-446655440004",
-        "permission": "VIEWER"
-      }
-    ]
-  },
-  "message": "Task assignments updated successfully"
-}
-```
-
-**Response Headers:**
-- `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
-- `ETag: "20240120T103500Z"` (New ETag after update, based on new `updated_at`)
-
-**Error Responses**
-
-| HTTP Status | Error Code | When |
-|-------------|------------|------|
-| 400 | VALIDATION_FAILED | Invalid request body format or both `add` and `remove` are empty/omitted |
-| 401 | UNAUTHENTICATED | Missing or invalid authentication token |
-| 401 | TOKEN_EXPIRED | JWT token has expired |
-| 401 | INVALID_TOKEN | Malformed token or missing required claims |
-| 403 | INSUFFICIENT_PERMISSIONS | User is not task owner |
-| 404 | TASK_NOT_FOUND | Task does not exist or is deleted |
-| 404 | ASSIGNMENT_NOT_FOUND | Employee ID in remove array is not assigned to task |
-| 404 | EMPLOYEE_NOT_FOUND | Employee ID does not exist or is not in same company |
-| 409 | DUPLICATE_ASSIGNMENT | Employee ID in add array is already assigned to task |
-| 412 | PRECONDITION_FAILED | ETag mismatch (If-Match header does not match current resource version) |
-| 422 | VALIDATION_ERROR | Invalid permission enum value or employee_id format |
-| 422 | BUSINESS_RULE_FAILED | Editor attempting to remove themselves (not allowed) |
-
-Example error (409 Conflict - Duplicate Assignment):
-```json
-{
-  "error": {
-    "code": "DUPLICATE_ASSIGNMENT",
-    "details": [
-      {"field": "add[0].employee_id", "issue": "Employee is already assigned to this task. Cannot add duplicate assignment."}
-    ]
-  },
-  "message": "Duplicate assignment: Employee is already assigned to this task."
-}
-```
-
-Example error (422 Unprocessable Entity - Business Rule):
-```json
-{
-  "error": {
-    "code": "BUSINESS_RULE_FAILED",
-    "details": [
-      {"field": "remove[0].employee_id", "issue": "Editors cannot remove themselves from task assignments. Only the task owner can remove editors."}
-    ]
-  },
-  "message": "Business rule violation: Editors cannot remove themselves."
-}
-```
-
----
-
-#### 4.3.7 DELETE /api/v1/company/tasks/{task_id}
+#### 4.3.5 DELETE /api/v1/company/tasks/{task_id}
 
 - **Purpose:** Hard delete task (permanent removal)
 - **Authentication:** Required (JWT Bearer token)
@@ -932,7 +792,7 @@ Example error (422 Unprocessable Entity - Business Rule):
     - `If-Match: "20240120T103000Z"` (REQUIRED - ETag from GET response, based on `updated_at`, see Rule 8)
   - **Response Headers (REQUIRED):**
     - `X-Request-ID: req_abc123xyz789` (REQUIRED - unique request identifier for debugging)
-- **Idempotency:** Yes (returns 204 if already deleted)
+- **Idempotency:** Yes (returns 200 if already deleted)
 
 **Path Parameters**
 
@@ -949,16 +809,23 @@ None
 **Note:** 
 - Task owner, CEO, and Manager can delete tasks
 - CEO and Manager can delete any company task (not limited to tasks they own)
-- Hard deletion (permanent) - sets IsDeleted marker
+- Hard deletion (permanent) - sets is_deleted marker
 - Deleted tasks are not returned in list or detail queries
 - Cannot be undone (no soft delete)
 - Editors cannot delete (403 error)
 - Viewers cannot delete (403 error)
 - HR cannot delete (403 error)
 
-**Success Response (204 No Content)**
+**Success Response (200 OK)**
 
-No response body. Task is permanently deleted.
+```json
+{
+  "data": {},
+  "message": "Task deleted successfully"
+}
+```
+
+**Note:** Returns 200 OK with StandardResponse instead of 204 No Content (per universal.md RULE 12.1.6 - FastAPI doesn't allow response body with 204).
 
 **Response Headers:**
 - `X-Request-ID: req_abc123xyz789` (REQUIRED - for debugging and support)
@@ -1043,12 +910,14 @@ None identified at this stage.
 2. **Task Ownership**: Task owner is automatically set to authenticated user at creation and cannot be changed
 3. **Initial Status**: Tasks must be created with status TODO (cannot create with other statuses)
 4. **Project Validation**: When linking task to project, project must exist and be ACTIVE
-5. **Hard Deletion**: Tasks use hard deletion (IsDeleted marker) - no soft delete support
+5. **Hard Deletion**: Tasks use hard deletion (is_deleted marker) - no soft delete support
 6. **Notifications**: Notifications are handled asynchronously by F-003 (Notifications System)
 7. **RBAC Integration**: Role-based access control is handled by F-002 (RBAC & Permission Engine)
 8. **Project Status Impact**: Tasks linked to INACTIVE or COMPLETED projects may have edit restrictions (business rule)
 9. **Terminal States**: Tasks in DONE or CANCELLED states are read-only (cannot be edited)
-10. **Assignment Management**: Add/remove assignments individually (not replace all at once)
+10. **Assignment Management**: Add/remove assignments individually via PATCH endpoint (not replace all at once)
+11. **Consolidated Update Endpoint**: Single PATCH /{task_id} endpoint handles name, description, status, and assignment updates with field-specific authorization
+12. **Initial Assignments**: Tasks can be created with initial assignments for other employees using the assignments array in POST request
 
 ---
 
@@ -1072,7 +941,7 @@ class TaskApiDocs:
     
     create: ClassVar[dict] = {
         "summary": "Purpose of this API is to create a new task",
-        "description": "Creates a new task with required name and optional description. Task owner is automatically set to authenticated user (immutable). Initial status must be TODO. Project linkage is optional but must reference an ACTIVE project."
+        "description": "Creates a new task with required name and optional description. Task owner is automatically set to authenticated user (immutable). Initial status must be TODO. Project linkage is optional but must reference an ACTIVE project. Can include initial assignments for other employees."
     }
     
     get: ClassVar[dict] = {
@@ -1081,23 +950,13 @@ class TaskApiDocs:
     }
     
     update: ClassVar[dict] = {
-        "summary": "Purpose of this API is to update task name and description",
-        "description": "Updates task name and/or description. Owner and Editors can edit. Viewers cannot edit. Tasks in terminal states (DONE, CANCELLED) are read-only. Requires If-Match header for concurrency control."
-    }
-    
-    change_status: ClassVar[dict] = {
-        "summary": "Purpose of this API is to change task status",
-        "description": "Changes task status. Only task owner can change status. Owner can move task to any status at any time. DONE and CANCELLED are terminal states. Requires If-Match header for concurrency control."
-    }
-    
-    update_assignments: ClassVar[dict] = {
-        "summary": "Purpose of this API is to update task assignments",
-        "description": "Adds or removes task assignments. Only task owner can manage assignments. Supports adding multiple assignments and removing multiple assignments in a single request. Prevents duplicate assignments. Editors cannot remove themselves. Requires If-Match header for concurrency control."
+        "summary": "Purpose of this API is to update task details (name, description, status, assignments)",
+        "description": "Updates task details in a single consolidated endpoint. Can update name, description, status, and/or assignments. All fields are optional - only provided fields will be updated. Authorization is field-specific: Name/Description (Owner, Editor, CEO, Manager), Status (Owner, Editor), Assignments (Owner, CEO, Manager). Tasks in terminal states (DONE, CANCELLED) are read-only. Requires If-Match header for concurrency control."
     }
     
     delete: ClassVar[dict] = {
         "summary": "Purpose of this API is to hard delete a task",
-        "description": "Permanently deletes a task (hard deletion with IsDeleted marker). Task owner, CEO, and Manager can delete tasks. CEO and Manager can delete any company task (not limited to tasks they own). Deleted tasks are not returned in queries. Cannot be undone. Requires If-Match header for concurrency control."
+        "description": "Permanently deletes a task (hard deletion with is_deleted marker). Task owner, CEO, and Manager can delete tasks. CEO and Manager can delete any company task (not limited to tasks they own). Deleted tasks are not returned in queries. Cannot be undone. Requires If-Match header for concurrency control."
     }
 ```
 

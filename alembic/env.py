@@ -20,9 +20,9 @@ from src.salaries.models import BankInfo, SalaryDetails, SalaryPayment, SalaryHi
 from src.projects.models import Project  # F-007 Project Management
 from src.tasks.models import Task, TaskAssignment  # F-008 Task Management
 from src.leaves.models import LeaveRequest  # F-009 Leave Management
+from src.notifications.models import Notification  # F-003 Notifications
+from src.attendance.models import Attendance, AttendanceLog  # F-010 Attendance Management
 # TODO: Import other models when they are implemented:
-# from src.attendance.models import Attendance
-# from src.notifications.models import Notification
 # from src.audits.models import Audit
 # from src.dashboards.models import Dashboard
 

@@ -12,6 +12,7 @@ from src.salaries.router import router as salaries_router, salary_payments_route
 from src.projects.router import router as projects_router
 from src.tasks.router import router as tasks_router
 from src.leaves.router import router as leaves_router
+from src.attendance.router import router as attendance_router, company_router as attendance_company_router
 
 # Create main API router
 api_router = APIRouter(prefix=settings.api_prefix)
@@ -30,6 +31,8 @@ api_router.include_router(salary_payments_router)
 api_router.include_router(projects_router)
 api_router.include_router(tasks_router)
 api_router.include_router(leaves_router)
+api_router.include_router(attendance_router)
+api_router.include_router(attendance_company_router)
 
 # TODO: Register other domain routers when implemented:
 # from src.users.router import router as users_router

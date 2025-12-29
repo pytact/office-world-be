@@ -6,7 +6,7 @@ No HTTP concerns, no database queries (uses repository).
 
 from uuid import UUID
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.permissions.models import Role
 from src.permissions.repository import RoleRepository
@@ -26,6 +26,9 @@ from src.permissions.constants import (
 )
 from src.pagination import PagedCollection
 from src.config import settings
+from src.permissions.utils import generate_etag
+from fastapi.responses import Response as FastAPIResponse
+from fastapi import status
 
 
 class RoleService:
@@ -45,8 +48,13 @@ class RoleService:
         if sort_order not in VALID_SORT_ORDERS:
             raise InvalidSortOrder(sort_order)
 
-    async def list_roles(self, query: RoleListQuery) -> PagedCollection[RoleListItem]:
-        """List roles with pagination, filtering, and sorting."""
+    async def list_roles(
+        self, query: RoleListQuery, if_none_match: Optional[str] = None
+    ) -> PagedCollection[RoleListItem] | FastAPIResponse:
+        """List roles with pagination, filtering, and sorting with ETag support.
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
+        """
         # Validate inputs
         self._validate_sort_field(query.sort_by)
         self._validate_sort_order(query.sort_order)
@@ -60,6 +68,22 @@ class RoleService:
             sort_by=query.sort_by,
             sort_order=query.sort_order,
         )
+
+        # Generate ETag based on most recent role's updated_at (if any)
+        # For empty results, use a fixed ETag
+        if items:
+            # Get the most recent updated_at from the result set
+            # Since we're sorting, the first item should have the latest timestamp
+            most_recent_updated_at = items[0].updated_at
+            etag = generate_etag(most_recent_updated_at)
+        else:
+            # Empty result set - use a fixed ETag
+            etag = generate_etag(datetime.now(timezone.utc))
+
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
 
         # Convert to response schemas
         role_items = [RoleListItem.model_validate(item) for item in items]
@@ -105,7 +129,7 @@ class RoleService:
             prev_params.append(f"page={query.page - 1}")
             prev_page = f"{base_path}?{'&'.join(prev_params)}"
 
-        return PagedCollection(
+        result = PagedCollection(
             items=role_items,
             total=total,
             page=query.page,
@@ -114,11 +138,36 @@ class RoleService:
             next_page=next_page,
             prev_page=prev_page,
         )
+        
+        # Attach ETag metadata for router to set header
+        result._etag = etag
+        if items:
+            result._last_modified = items[0].updated_at
+        
+        return result
 
-    async def get_role_by_id(self, role_id: UUID) -> RoleRead:
-        """Get role by ID."""
+    async def get_role_by_id(
+        self, role_id: UUID, if_none_match: Optional[str] = None
+    ) -> RoleRead | FastAPIResponse:
+        """Get role by ID with ETag support.
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
+        """
         role = await self.repository.get_by_id(role_id)
         if not role:
             raise RoleNotFound(str(role_id))
 
-        return RoleRead.model_validate(role)
+        # Generate ETag in service (business logic)
+        etag = generate_etag(role.updated_at)
+
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+
+        # Return role with ETag metadata
+        result = RoleRead.model_validate(role)
+        result._etag = etag
+        result._last_modified = role.updated_at
+        
+        return result

@@ -215,7 +215,7 @@ class TaskApiDep:
         role: str,
         if_match: Optional[str] = None,
     ):
-        """Change task status (owner only)."""
+        """Change task status (owner or editor)."""
         return await self.service.change_status(
             task_id=task_id,
             company_id=company_id,

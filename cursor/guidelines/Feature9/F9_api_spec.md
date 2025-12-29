@@ -238,7 +238,7 @@ class LeaveApiDocs:
     
     create: ClassVar[dict] = {
         "summary": "Purpose of this API is to create a new leave request",
-        "description": "Creates a new leave request for the authenticated user. Requires manager_approver_id and hr_approver_id (both must be in the same company). Validates overlapping leave requests, non-working days (weekends/holidays), and employee active status. Calculates number_of_days from date range and day_type. Sets initial manager_status to PENDING_MANAGER and hr_status to PENDING_HR. Triggers notification to manager approver. Only active employees can create leave requests."
+        "description": "Creates a new leave request for the authenticated user. Requires manager_approver_id and hr_approver_id (both must be in the same company). Validates overlapping leave requests, non-working days (weekends/holidays), and employee active status. Calculates number_of_days from date range and day_type. Sets initial manager_status to PENDING_MANAGER and hr_status to PENDING_HR. Triggers notification to manager approver and HR approver. Only active employees can create leave requests."
     }
     
     get: ClassVar[dict] = {
@@ -248,7 +248,7 @@ class LeaveApiDocs:
     
     action: ClassVar[dict] = {
         "summary": "Purpose of this API is to approve, reject, or cancel a leave request",
-        "description": "Performs approve, reject, or cancel action on a leave request. Approve: User must be the assigned approver at the current workflow stage. Reject: User must be the assigned approver at the current workflow stage, rejection_reason is mandatory. Cancel: Only the applicant can cancel, and only if status is pending. Requires If-Match header for concurrency control. Triggers notifications on approve/reject (not on cancel). Updates workflow status and timestamps accordingly."
+        "description": "Performs approve, reject, or cancel action on a leave request. Approve: User must be the assigned approver at the current workflow stage. Reject: User must be the assigned approver at the current workflow stage, rejection_reason is mandatory. Cancel: Only the applicant can cancel, and only if status is pending. Requires If-Match header for concurrency control. Triggers notifications on approve/reject/cancel. Updates workflow status and timestamps accordingly."
     }
 ```
 
@@ -346,7 +346,8 @@ None
         "number_of_days": 3.0,
         "manager_status": "APPROVED_MANAGER",
         "hr_status": "PENDING_HR",
-        "created_at": "2024-02-10T10:30:00Z"
+        "created_at": "2024-02-10T10:30:00Z",
+        "updated_at": "2024-02-11T14:30:00Z"
       }
     ],
     "total": 150,
@@ -544,7 +545,7 @@ Example error (409 Invalid Approver):
 - `number_of_days` is calculated from date range and `day_type` (half-days count as 0.5)
 - Initial `manager_status` is set to `PENDING_MANAGER`
 - Initial `hr_status` is set to `PENDING_HR`
-- Notification is triggered to manager approver (via F-003)
+- Notification is triggered to manager approver and HR approver (via F-003)
 
 ---
 
@@ -836,7 +837,7 @@ Example error (422 Validation Error - Missing Rejection Reason):
 - Only the applicant (employee who created the leave request) can cancel
 - Can only cancel if leave request is pending (not approved or rejected)
 - Sets both `manager_status` and `hr_status` to `CANCELLED`
-- Does not trigger notification (per feature brief)
+- Triggers notifications to manager approver and HR approver
 - Workflow terminates
 
 **Workflow State Transitions:**
@@ -868,14 +869,12 @@ Example error (422 Validation Error - Missing Rejection Reason):
 ### 5.1 Notifications (F-003 Integration)
 
 **Trigger Events:**
-- Leave request created → Notification to manager approver
+- Leave request created → Notification to manager approver and HR approver (informational)
 - Leave request approved (manager stage) → Notification to HR approver and applicant
 - Leave request approved (HR stage) → Notification to applicant
 - Leave request rejected (manager stage) → Notification to applicant
 - Leave request rejected (HR stage) → Notification to applicant
-
-**Not Triggered:**
-- Leave request cancelled → No notification (per feature brief)
+- Leave request cancelled → Notification to manager approver and HR approver
 
 **Notification Details:**
 - Notification system (F-003) handles email and in-app notifications
@@ -916,7 +915,7 @@ None identified at this stage.
 7. **Number of Days Calculation**: Calculated from date range and `day_type` (half-days = 0.5, full days = 1.0 per day)
 8. **Concurrency Control**: ETags based on `updated_at` timestamp prevent lost updates
 9. **Status Representation**: Both `manager_status` and `hr_status` are exposed separately (no computed overall status)
-10. **Cancellation**: Only applicant can cancel, only while pending, no notification triggered
+10. **Cancellation**: Only applicant can cancel, only while pending, notifications sent to approvers
 
 ---
 
@@ -940,7 +939,8 @@ None identified at this stage.
   "number_of_days": "number (decimal)",
   "manager_status": "string (ENUM)",
   "hr_status": "string (ENUM)",
-  "created_at": "string (ISO 8601 datetime UTC)"
+  "created_at": "string (ISO 8601 datetime UTC)",
+  "updated_at": "string (ISO 8601 datetime UTC)"
 }
 ```
 

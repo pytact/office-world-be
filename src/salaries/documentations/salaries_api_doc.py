@@ -27,7 +27,7 @@ class SalaryApiDocs:
     
     get_salary_history: ClassVar[dict] = {
         "summary": "Get salary history",
-        "description": "Retrieve salary history for an employee. Returns list of all salary changes over time. HR / CEO only."
+        "description": "Retrieve salary history for an employee. Returns list of all salary changes over time. Supports ETag-based caching with If-None-Match header. HR / CEO only."
     }
     
     get_bank_info: ClassVar[dict] = {
@@ -57,12 +57,12 @@ class SalaryApiDocs:
     
     list_payments_by_month_year: ClassVar[dict] = {
         "summary": "Get salary payments by month/year",
-        "description": "Get salary payments by month and year across company. Used for payroll reports, compliance, and finance reconciliation. Only CEO and HR can access this endpoint."
+        "description": "Get salary payments by month and year across company. Used for payroll reports, compliance, and finance reconciliation. Supports ETag-based caching with If-None-Match header. Only CEO and HR can access this endpoint."
     }
     
     list_payments: ClassVar[dict] = {
         "summary": "List salary payments",
-        "description": "List all salary payments for an employee with pagination, filtering, and sorting. Supports filtering by year, month, and payment method. Supports sorting by paid_on, month, year, amount, or created_at. Only CEO and HR can access this endpoint."
+        "description": "List all salary payments for an employee with pagination, filtering, and sorting. Supports filtering by year, month, and payment method. Supports sorting by paid_on, month, year, amount, or created_at. Supports ETag-based caching with If-None-Match header. Only CEO and HR can access this endpoint."
     }
     
     get_salary_slip: ClassVar[dict] = {

@@ -249,23 +249,34 @@ async def get_salary_history(
     employee_id: UUID,
     api: SalaryApiDep = Depends(SalaryApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_ceo_or_hr),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     response: Response = None,
-) -> StandardResponse[list[SalaryHistoryResponse]]:
+) -> StandardResponse[list[SalaryHistoryResponse]] | FastAPIResponse:
     """Get salary history for an employee.
     
     HR / CEO only.
     
     Based on F6_api_spec.md - GET /v1/company/employees/{employee_id}/salary/history.
     Authorization: CEO, HR, SuperAdmin only (Employee and Manager return 403).
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
     request_id = generate_request_id(x_request_id)
     user, company_id = user_company
     
+    # Handle empty strings for If-None-Match
+    if_none_match_value = if_none_match if if_none_match and if_none_match.strip() else None
+    
     result = await api.get_salary_history(
         employee_id=employee_id,
         company_id=company_id,
+        if_none_match=if_none_match_value,
     )
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
     
     response_data = StandardResponse(
         data=result,
@@ -273,6 +284,12 @@ async def get_salary_history(
     )
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id
+    
+    # Set ETag and Last-Modified headers if available (from list metadata)
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     
     return json_response
 
@@ -482,9 +499,10 @@ async def list_salary_payments(
     query: SalaryPaymentListQuery = Depends(SalaryPaymentListQuery),
     api: SalaryApiDep = Depends(SalaryApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_employee_access),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     response: Response = None,
-) -> StandardResponse[SalaryPaymentPaginatedResponse]:
+) -> StandardResponse[SalaryPaymentPaginatedResponse] | FastAPIResponse:
     """Get employee salary payments.
     
     Role Scope:
@@ -492,15 +510,25 @@ async def list_salary_payments(
     - HR / CEO → company scope
     
     Based on F6_api_spec.md - GET /v1/company/employees/{employee_id}/salary/payments.
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
     request_id = generate_request_id(x_request_id)
     user, company_id = user_company
+    
+    # Handle empty strings for If-None-Match
+    if_none_match_value = if_none_match if if_none_match and if_none_match.strip() else None
     
     result = await api.list_salary_payments(
         employee_id=employee_id,
         company_id=company_id,
         query=query,
+        if_none_match=if_none_match_value,
     )
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
     
     response_data = StandardResponse(
         data=result,
@@ -509,6 +537,12 @@ async def list_salary_payments(
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id
     
+    # Set ETag and Last-Modified headers if available
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    
     return json_response
 
 
@@ -516,8 +550,8 @@ async def list_salary_payments(
     "/salary-payments/run",
     response_model=StandardResponse[SalaryPaymentResponse],
     status_code=status.HTTP_201_CREATED,
-    summary="Execute salary payment",
-    description="Execute salary payment for an employee. Used by HR and automated payroll jobs. Checks payment not already done, fetches active salary_details and bank_info, inserts salary_payment, and triggers async slip generation.",
+    summary=SalaryApiDocs.run_payment["summary"],
+    description=SalaryApiDocs.run_payment["description"],
 )
 async def run_salary_payment(
     request: Request,
@@ -626,8 +660,8 @@ salary_payments_router = APIRouter(
 @salary_payments_router.get(
     "",
     response_model=StandardResponse[SalaryPaymentPaginatedResponse],
-    summary="Get salary payments by month/year",
-    description="Get salary payments by month and year across company. Used for payroll reports, compliance, and finance reconciliation.",
+    summary=SalaryApiDocs.list_payments_by_month_year["summary"],
+    description=SalaryApiDocs.list_payments_by_month_year["description"],
 )
 async def get_salary_payments_by_month_year(
     request: Request,
@@ -639,9 +673,10 @@ async def get_salary_payments_by_month_year(
     sort_order: str = "desc",
     api: SalaryApiDep = Depends(SalaryApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_ceo_or_hr),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     response: Response = None,
-) -> StandardResponse[SalaryPaymentPaginatedResponse]:
+) -> StandardResponse[SalaryPaymentPaginatedResponse] | FastAPIResponse:
     """Get salary payments by month/year.
     
     Used for:
@@ -651,9 +686,13 @@ async def get_salary_payments_by_month_year(
     
     Based on F6_api_spec.md - GET /v1/salary-payments?month={month}&year={year}.
     Authorization: CEO, HR, SuperAdmin only.
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
     request_id = generate_request_id(x_request_id)
     user, company_id = user_company
+    
+    # Handle empty strings for If-None-Match
+    if_none_match_value = if_none_match if if_none_match and if_none_match.strip() else None
     
     result = await api.list_salary_payments_by_month_year(
         company_id=company_id,
@@ -663,7 +702,13 @@ async def get_salary_payments_by_month_year(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+        if_none_match=if_none_match_value,
     )
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
     
     response_data = StandardResponse(
         data=result,
@@ -671,6 +716,12 @@ async def get_salary_payments_by_month_year(
     )
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id
+    
+    # Set ETag and Last-Modified headers if available
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     
     return json_response
 

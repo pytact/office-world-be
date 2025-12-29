@@ -80,21 +80,21 @@ class NotificationApiDep:
         self.service = NotificationService(session)
         self.session = session
 
-    async def list_notifications(self, user_id: UUID, company_id: UUID, query):
-        """List notifications with pagination, filtering, and sorting."""
-        return await self.service.list_notifications(user_id, company_id, query)
+    async def list_notifications(self, user_id: UUID, company_id: UUID, query, if_none_match: Optional[str] = None):
+        """List notifications with pagination, filtering, and sorting with ETag support."""
+        return await self.service.list_notifications(user_id, company_id, query, if_none_match=if_none_match)
 
-    async def get_notification_by_id(self, notification_id: UUID, user_id: UUID, company_id: UUID):
-        """Get notification by ID."""
-        return await self.service.get_notification_by_id(notification_id, user_id, company_id)
+    async def get_notification_by_id(self, notification_id: UUID, user_id: UUID, company_id: UUID, if_none_match: Optional[str] = None):
+        """Get notification by ID with ETag support."""
+        return await self.service.get_notification_by_id(notification_id, user_id, company_id, if_none_match=if_none_match)
 
     async def mark_notification_as_read(self, notification_id: UUID, user_id: UUID, company_id: UUID):
         """Mark notification as read."""
         return await self.service.mark_notification_as_read(notification_id, user_id, company_id)
 
-    async def bulk_mark_read(self, user_id: UUID, company_id: UUID, request):
-        """Bulk mark notifications as read or unread."""
-        return await self.service.bulk_mark_read(user_id, company_id, request)
+    async def bulk_mark_read(self, user_id: UUID, company_id: UUID, request, if_match: Optional[str] = None):
+        """Bulk mark notifications as read or unread with ETag validation."""
+        return await self.service.bulk_mark_read(user_id, company_id, request, if_match=if_match)
 
     async def get_unread_count(self, user_id: UUID, company_id: UUID):
         """Get unread notification count."""

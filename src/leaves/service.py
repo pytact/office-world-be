@@ -29,7 +29,7 @@ from src.leaves.utils import (
 )
 from src.celery_worker import (
     send_leave_created_notification, send_leave_approved_notification,
-    send_leave_rejected_notification
+    send_leave_rejected_notification, send_leave_cancelled_notification
 )
 
 
@@ -96,15 +96,34 @@ class LeaveService:
         created_leave = await self.repository.create(leave_request)
 
         # Trigger notification to manager approver
-        if leave_request.manager_approver:
+        # Use created_leave which has eagerly loaded relationships
+        if created_leave.manager_approver and created_leave.manager_approver.user:
             send_leave_created_notification.delay(
-                manager_email=leave_request.manager_approver.email,
-                manager_name=f"{leave_request.manager_approver.first_name} {leave_request.manager_approver.last_name}".strip(),
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                company_name=leave_request.company.name if leave_request.company else "Company"
+                manager_email=created_leave.manager_approver.user.email,
+                manager_name=f"{created_leave.manager_approver.user.first_name} {created_leave.manager_approver.user.last_name}".strip(),
+                manager_user_id=str(created_leave.manager_approver.user_id),
+                applicant_name=f"{created_leave.employee.user.first_name} {created_leave.employee.user.last_name}".strip() if created_leave.employee.user else "Employee",
+                leave_type=created_leave.leave_type,
+                start_date=created_leave.start_date.isoformat(),
+                end_date=created_leave.end_date.isoformat(),
+                company_id=str(created_leave.company_id),
+                company_name=created_leave.company.name if created_leave.company else "Company",
+                leave_id=str(created_leave.id)
+            )
+
+        # Trigger notification to HR approver (informational - they'll need to approve after manager)
+        if created_leave.hr_approver and created_leave.hr_approver.user:
+            send_leave_created_notification.delay(
+                manager_email=created_leave.hr_approver.user.email,
+                manager_name=f"{created_leave.hr_approver.user.first_name} {created_leave.hr_approver.user.last_name}".strip(),
+                manager_user_id=str(created_leave.hr_approver.user_id),
+                applicant_name=f"{created_leave.employee.user.first_name} {created_leave.employee.user.last_name}".strip() if created_leave.employee.user else "Employee",
+                leave_type=created_leave.leave_type,
+                start_date=created_leave.start_date.isoformat(),
+                end_date=created_leave.end_date.isoformat(),
+                company_id=str(created_leave.company_id),
+                company_name=created_leave.company.name if created_leave.company else "Company",
+                leave_id=str(created_leave.id)
             )
 
         # Return response schema
@@ -115,6 +134,7 @@ class LeaveService:
         leave_id: UUID,
         company_id: UUID = None,
         user_id: UUID = None,
+        employee_id: Optional[UUID] = None,
         user_role: str = None,
         if_none_match: str = None
     ) -> LeaveRead | FastAPIResponse:
@@ -125,7 +145,7 @@ class LeaveService:
             raise LeaveRequestNotFound(str(leave_id))
 
         # Check access permissions
-        await self._check_leave_access(leave_request, company_id, user_id, user_role)
+        await self._check_leave_access(leave_request, company_id, user_id, user_role, employee_id)
 
         # Generate ETag and check If-None-Match
         etag = generate_etag(leave_request.updated_at)
@@ -143,7 +163,7 @@ class LeaveService:
         self,
         query: LeaveListQuery,
         company_id: UUID = None,
-        user_id: UUID = None,
+        employee_id: Optional[UUID] = None,
         user_role: str = None
     ) -> LeavePaginatedResponse:
         """List leave requests with pagination, filtering, and role-based access."""
@@ -171,7 +191,7 @@ class LeaveService:
             sort_by=query.sort_by,
             sort_order=query.sort_order,
             company_id=company_id,
-            user_id=user_id,
+            employee_id=employee_id,
             user_role=user_role
         )
 
@@ -183,8 +203,8 @@ class LeaveService:
                 "employee_id": item.employee_id,
                 "employee": {
                     "id": item.employee.id if item.employee else None,
-                    "first_name": item.employee.first_name if item.employee else None,
-                    "last_name": item.employee.last_name if item.employee else None,
+                    "first_name": item.employee.user.first_name if item.employee and item.employee.user else None,
+                    "last_name": item.employee.user.last_name if item.employee and item.employee.user else None,
                 } if item.employee else None,
                 "leave_type": item.leave_type,
                 "start_date": item.start_date,
@@ -193,7 +213,8 @@ class LeaveService:
                 "number_of_days": item.number_of_days,
                 "manager_status": item.manager_status,
                 "hr_status": item.hr_status,
-                "created_at": item.created_at
+                "created_at": item.created_at,
+                "updated_at": item.updated_at
             }
             leave_summaries.append(summary)
 
@@ -219,6 +240,7 @@ class LeaveService:
         leave_id: UUID,
         action_data: LeaveActionRequest,
         user_id: UUID,
+        employee_id: Optional[UUID],
         user_role: str,
         company_id: UUID = None,
         if_match: str = None
@@ -242,18 +264,33 @@ class LeaveService:
                 "Resource has been modified since retrieval. Please fetch the latest version and retry."
             )
 
-        # Get user for notifications
+        # Get employee for notifications (for approve/reject actions)
         from src.employees.repository import EmployeeRepository
         employee_repo = EmployeeRepository(self.session)
-        user = await employee_repo.get_by_id(user_id)
+        user = None
+        if employee_id:
+            user = await employee_repo.get_by_id(employee_id)
+        elif user_id:
+            # Fallback: try to get employee by user_id
+            user = await employee_repo.get_by_user_id(user_id, company_id)
 
         # Perform action based on type
         if action_data.action == ActionType.APPROVE:
+            if not user:
+                raise InvalidApprover("user", user_id)
             await self._approve_leave(leave_request, user, user_role)
         elif action_data.action == ActionType.REJECT:
+            if not user:
+                raise InvalidApprover("user", user_id)
             await self._reject_leave(leave_request, action_data.rejection_reason, user, user_role)
         elif action_data.action == ActionType.CANCEL:
-            await self._cancel_leave(leave_request, user_id)
+            if not employee_id:
+                raise BusinessRuleFailed(
+                    "Employee record not found",
+                    "employee_id",
+                    "You must be an employee to cancel a leave request."
+                )
+            await self._cancel_leave(leave_request, employee_id)
 
         # Update and return
         updated_leave = await self.repository.update(leave_request)
@@ -298,64 +335,83 @@ class LeaveService:
             # HR status remains PENDING_HR
 
             # Trigger notifications to HR approver and applicant
-            if leave_request.hr_approver:
+            if leave_request.hr_approver and leave_request.hr_approver.user:
                 send_leave_approved_notification.delay(
-                    recipient_email=leave_request.hr_approver.email,
-                    recipient_name=f"{leave_request.hr_approver.first_name} {leave_request.hr_approver.last_name}".strip(),
-                    applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
+                    recipient_email=leave_request.hr_approver.user.email,
+                    recipient_name=f"{leave_request.hr_approver.user.first_name} {leave_request.hr_approver.user.last_name}".strip(),
+                    recipient_user_id=str(leave_request.hr_approver.user_id),
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip() if leave_request.employee.user else "Employee",
                     leave_type=leave_request.leave_type,
                     start_date=leave_request.start_date.isoformat(),
                     end_date=leave_request.end_date.isoformat(),
-                    approved_by=f"{user.first_name} {user.last_name}".strip(),
+                    approved_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    company_id=str(leave_request.company_id),
                     company_name=leave_request.company.name if leave_request.company else "Company",
-                    approval_stage="Manager"
+                    approval_stage="Manager",
+                    leave_id=str(leave_request.id),
+                    notification_type="leave_manager_approval"
                 )
 
             # Also notify applicant
-            send_leave_approved_notification.delay(
-                recipient_email=leave_request.employee.email,
-                recipient_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                approved_by=f"{user.first_name} {user.last_name}".strip(),
-                company_name=leave_request.company.name if leave_request.company else "Company",
-                approval_stage="Manager"
-            )
+            if leave_request.employee and leave_request.employee.user:
+                send_leave_approved_notification.delay(
+                    recipient_email=leave_request.employee.user.email,
+                    recipient_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    recipient_user_id=str(leave_request.employee.user_id),
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    leave_type=leave_request.leave_type,
+                    start_date=leave_request.start_date.isoformat(),
+                    end_date=leave_request.end_date.isoformat(),
+                    approved_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    company_id=str(leave_request.company_id),
+                    company_name=leave_request.company.name if leave_request.company else "Company",
+                    approval_stage="Manager",
+                    leave_id=str(leave_request.id),
+                    notification_type="leave_approval"
+                )
         elif current_stage == "hr":
             leave_request.hr_status = STATUS_APPROVED_HR
             leave_request.hr_approved_at = now
 
             # Trigger notification to applicant
-            send_leave_approved_notification.delay(
-                recipient_email=leave_request.employee.email,
-                recipient_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                approved_by=f"{user.first_name} {user.last_name}".strip(),
-                company_name=leave_request.company.name if leave_request.company else "Company",
-                approval_stage="HR"
-            )
+            if leave_request.employee and leave_request.employee.user:
+                send_leave_approved_notification.delay(
+                    recipient_email=leave_request.employee.user.email,
+                    recipient_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    recipient_user_id=str(leave_request.employee.user_id),
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    leave_type=leave_request.leave_type,
+                    start_date=leave_request.start_date.isoformat(),
+                    end_date=leave_request.end_date.isoformat(),
+                    approved_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    company_id=str(leave_request.company_id),
+                    company_name=leave_request.company.name if leave_request.company else "Company",
+                    approval_stage="HR",
+                    leave_id=str(leave_request.id),
+                    notification_type="leave_approval"
+                )
         elif current_stage == "ceo":
             # CEO approval for HR leaves (no specific CEO approver field)
             leave_request.hr_status = STATUS_APPROVED_HR
             leave_request.hr_approved_at = now
 
             # Trigger notification to applicant
-            send_leave_approved_notification.delay(
-                recipient_email=leave_request.employee.email,
-                recipient_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                approved_by=f"{user.first_name} {user.last_name}".strip(),
-                company_name=leave_request.company.name if leave_request.company else "Company",
-                approval_stage="CEO"
-            )
+            if leave_request.employee and leave_request.employee.user:
+                send_leave_approved_notification.delay(
+                    recipient_email=leave_request.employee.user.email,
+                    recipient_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    recipient_user_id=str(leave_request.employee.user_id),
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    leave_type=leave_request.leave_type,
+                    start_date=leave_request.start_date.isoformat(),
+                    end_date=leave_request.end_date.isoformat(),
+                    approved_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    company_id=str(leave_request.company_id),
+                    company_name=leave_request.company.name if leave_request.company else "Company",
+                    approval_stage="CEO",
+                    leave_id=str(leave_request.id),
+                    notification_type="leave_approval"
+                )
 
     async def _reject_leave(self, leave_request: LeaveRequest, rejection_reason: str, user, user_role: str) -> None:
         """Reject leave request."""
@@ -393,54 +449,66 @@ class LeaveService:
             leave_request.manager_rejection_reason = rejection_reason
 
             # Trigger notification to applicant
-            send_leave_rejected_notification.delay(
-                applicant_email=leave_request.employee.email,
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                rejected_by=f"{user.first_name} {user.last_name}".strip(),
-                rejection_reason=rejection_reason,
-                company_name=leave_request.company.name if leave_request.company else "Company",
-                rejection_stage="Manager"
-            )
+            if leave_request.employee and leave_request.employee.user:
+                send_leave_rejected_notification.delay(
+                    applicant_email=leave_request.employee.user.email,
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    applicant_user_id=str(leave_request.employee.user_id),
+                    leave_type=leave_request.leave_type,
+                    start_date=leave_request.start_date.isoformat(),
+                    end_date=leave_request.end_date.isoformat(),
+                    rejected_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    rejection_reason=rejection_reason,
+                    company_id=str(leave_request.company_id),
+                    company_name=leave_request.company.name if leave_request.company else "Company",
+                    rejection_stage="Manager",
+                    leave_id=str(leave_request.id)
+                )
         elif current_stage == "hr":
             leave_request.hr_status = STATUS_REJECTED_HR
             leave_request.hr_rejection_reason = rejection_reason
 
             # Trigger notification to applicant
-            send_leave_rejected_notification.delay(
-                applicant_email=leave_request.employee.email,
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                rejected_by=f"{user.first_name} {user.last_name}".strip(),
-                rejection_reason=rejection_reason,
-                company_name=leave_request.company.name if leave_request.company else "Company",
-                rejection_stage="HR"
-            )
+            if leave_request.employee and leave_request.employee.user:
+                send_leave_rejected_notification.delay(
+                    applicant_email=leave_request.employee.user.email,
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    applicant_user_id=str(leave_request.employee.user_id),
+                    leave_type=leave_request.leave_type,
+                    start_date=leave_request.start_date.isoformat(),
+                    end_date=leave_request.end_date.isoformat(),
+                    rejected_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    rejection_reason=rejection_reason,
+                    company_id=str(leave_request.company_id),
+                    company_name=leave_request.company.name if leave_request.company else "Company",
+                    rejection_stage="HR",
+                    leave_id=str(leave_request.id)
+                )
         elif current_stage == "ceo":
             leave_request.hr_status = STATUS_REJECTED_HR
             leave_request.hr_rejection_reason = rejection_reason
 
             # Trigger notification to applicant
-            send_leave_rejected_notification.delay(
-                applicant_email=leave_request.employee.email,
-                applicant_name=f"{leave_request.employee.first_name} {leave_request.employee.last_name}".strip(),
-                leave_type=leave_request.leave_type,
-                start_date=leave_request.start_date.isoformat(),
-                end_date=leave_request.end_date.isoformat(),
-                rejected_by=f"{user.first_name} {user.last_name}".strip(),
-                rejection_reason=rejection_reason,
-                company_name=leave_request.company.name if leave_request.company else "Company",
-                rejection_stage="CEO"
-            )
+            if leave_request.employee and leave_request.employee.user:
+                send_leave_rejected_notification.delay(
+                    applicant_email=leave_request.employee.user.email,
+                    applicant_name=f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip(),
+                    applicant_user_id=str(leave_request.employee.user_id),
+                    leave_type=leave_request.leave_type,
+                    start_date=leave_request.start_date.isoformat(),
+                    end_date=leave_request.end_date.isoformat(),
+                    rejected_by=f"{user.user.first_name} {user.user.last_name}".strip() if user.user else "Unknown",
+                    rejection_reason=rejection_reason,
+                    company_id=str(leave_request.company_id),
+                    company_name=leave_request.company.name if leave_request.company else "Company",
+                    rejection_stage="CEO",
+                    leave_id=str(leave_request.id)
+                )
 
-    async def _cancel_leave(self, leave_request: LeaveRequest, user_id: UUID) -> None:
+    async def _cancel_leave(self, leave_request: LeaveRequest, employee_id: UUID) -> None:
         """Cancel leave request (only by applicant)."""
         # Only applicant can cancel
-        if leave_request.employee_id != user_id:
+        if leave_request.employee_id != employee_id:
             raise InsufficientPermissionsForLeaveAction(
                 "cancel",
                 "Only the leave applicant can cancel their leave request."
@@ -455,24 +523,92 @@ class LeaveService:
         leave_request.manager_status = STATUS_CANCELLED
         leave_request.hr_status = STATUS_CANCELLED
 
+        # Trigger notifications to manager and HR approvers
+        applicant_name = f"{leave_request.employee.user.first_name} {leave_request.employee.user.last_name}".strip() if leave_request.employee and leave_request.employee.user else "Employee"
+        
+        # Notify manager approver
+        if leave_request.manager_approver and leave_request.manager_approver.user:
+            send_leave_cancelled_notification.delay(
+                recipient_email=leave_request.manager_approver.user.email,
+                recipient_name=f"{leave_request.manager_approver.user.first_name} {leave_request.manager_approver.user.last_name}".strip(),
+                recipient_user_id=str(leave_request.manager_approver.user_id),
+                applicant_name=applicant_name,
+                leave_type=leave_request.leave_type,
+                start_date=leave_request.start_date.isoformat(),
+                end_date=leave_request.end_date.isoformat(),
+                company_id=str(leave_request.company_id),
+                company_name=leave_request.company.name if leave_request.company else "Company",
+                leave_id=str(leave_request.id)
+            )
+
+        # Notify HR approver
+        if leave_request.hr_approver and leave_request.hr_approver.user:
+            send_leave_cancelled_notification.delay(
+                recipient_email=leave_request.hr_approver.user.email,
+                recipient_name=f"{leave_request.hr_approver.user.first_name} {leave_request.hr_approver.user.last_name}".strip(),
+                recipient_user_id=str(leave_request.hr_approver.user_id),
+                applicant_name=applicant_name,
+                leave_type=leave_request.leave_type,
+                start_date=leave_request.start_date.isoformat(),
+                end_date=leave_request.end_date.isoformat(),
+                company_id=str(leave_request.company_id),
+                company_name=leave_request.company.name if leave_request.company else "Company",
+                leave_id=str(leave_request.id)
+            )
+
     async def _validate_approvers(self, manager_approver_id: UUID, hr_approver_id: UUID, company_id: UUID) -> None:
         """Validate that approvers exist and have correct roles."""
         # Import here to avoid circular imports
         from src.employees.repository import EmployeeRepository
+        from src.permissions.models import UserRoleAssignment, Role
+        from sqlalchemy.orm import selectinload
+        from sqlalchemy import select
 
         employee_repo = EmployeeRepository(self.session)
 
         # Check manager approver
         manager = await employee_repo.get_by_id(manager_approver_id)
-        if not manager or manager.company_id != company_id or manager.role != "manager":
+        if not manager or manager.company_id != company_id:
+            raise InvalidApprover("manager", manager_approver_id)
+        
+        # Check manager role through UserRoleAssignment
+        manager_role_result = await self.session.execute(
+            select(UserRoleAssignment)
+            .join(Role)
+            .where(
+                UserRoleAssignment.user_id == manager.user_id,
+                UserRoleAssignment.company_id == company_id,
+                UserRoleAssignment.is_active.is_(True),
+                UserRoleAssignment.deleted_at.is_(None),
+                Role.code == "manager"
+            )
+        )
+        manager_role = manager_role_result.scalar_one_or_none()
+        if not manager_role:
             raise InvalidApprover("manager", manager_approver_id)
 
         # Check HR approver
         hr = await employee_repo.get_by_id(hr_approver_id)
-        if not hr or hr.company_id != company_id or hr.role != "hr":
+        if not hr or hr.company_id != company_id:
+            raise InvalidApprover("hr", hr_approver_id)
+        
+        # Check HR role through UserRoleAssignment
+        hr_role_result = await self.session.execute(
+            select(UserRoleAssignment)
+            .join(Role)
+            .where(
+                UserRoleAssignment.user_id == hr.user_id,
+                UserRoleAssignment.company_id == company_id,
+                UserRoleAssignment.is_active.is_(True),
+                UserRoleAssignment.deleted_at.is_(None),
+                Role.code == "hr"
+            )
+        )
+        hr_role = hr_role_result.scalar_one_or_none()
+        if not hr_role:
             raise InvalidApprover("hr", hr_approver_id)
 
-    async def _check_leave_access(self, leave_request: LeaveRequest, company_id: UUID, user_id: UUID, user_role: str) -> None:
+    async def _check_leave_access(self, leave_request: LeaveRequest, company_id: UUID, user_id: UUID, user_role: str, employee_id: Optional[UUID] = None) -> None:
         """Check if user has access to view this leave request."""
         # Company scoping
         if company_id and leave_request.company_id != company_id:
@@ -480,12 +616,35 @@ class LeaveService:
 
         # Role-based access
         if user_role == "employee":
-            # Can only see own leaves
-            if leave_request.employee_id != user_id:
+            # Can only see own leaves - need employee_id to compare
+            if not employee_id:
+                # Try to get employee_id from user_id
+                from src.employees.repository import EmployeeRepository
+                employee_repo = EmployeeRepository(self.session)
+                employee = await employee_repo.get_by_user_id(user_id, company_id)
+                if employee:
+                    employee_id = employee.id
+                else:
+                    raise LeaveRequestNotFound(str(leave_request.id))
+            
+            if leave_request.employee_id != employee_id:
                 raise LeaveRequestNotFound(str(leave_request.id))
         elif user_role == "manager":
             # Can see own leaves or leaves assigned for approval
-            if leave_request.employee_id != user_id and leave_request.manager_approver_id != user_id:
+            if not employee_id:
+                # Try to get employee_id from user_id
+                from src.employees.repository import EmployeeRepository
+                employee_repo = EmployeeRepository(self.session)
+                employee = await employee_repo.get_by_user_id(user_id, company_id)
+                if employee:
+                    employee_id = employee.id
+            
+            if employee_id:
+                if leave_request.employee_id != employee_id and leave_request.manager_approver_id != employee_id:
+                    raise LeaveRequestNotFound(str(leave_request.id))
+            else:
+                # If no employee_id, check manager_approver_id using user_id (fallback)
+                # This shouldn't happen in normal flow, but handle it gracefully
                 raise LeaveRequestNotFound(str(leave_request.id))
         # HR and CEO can see all company leaves
 
@@ -496,8 +655,8 @@ class LeaveService:
             employee_id=leave_request.employee_id,
             employee={
                 "id": leave_request.employee.id if leave_request.employee else None,
-                "first_name": leave_request.employee.first_name if leave_request.employee else None,
-                "last_name": leave_request.employee.last_name if leave_request.employee else None,
+                "first_name": leave_request.employee.user.first_name if leave_request.employee and leave_request.employee.user else None,
+                "last_name": leave_request.employee.user.last_name if leave_request.employee and leave_request.employee.user else None,
             } if leave_request.employee else None,
             company_id=leave_request.company_id,
             leave_type=leave_request.leave_type,

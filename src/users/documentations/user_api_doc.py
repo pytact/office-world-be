@@ -11,12 +11,12 @@ class UserApiDocs:
 
     list_platform_users: ClassVar[dict] = {
         "summary": "Purpose of this API is to list all users across the platform",
-        "description": "Retrieves a paginated list of all users across all companies. Only SuperAdmin can access this endpoint. Supports filtering by company, role, status, and search by name/email. Includes pagination, sorting, and navigation URLs.",
+        "description": "Retrieves a paginated list of all users across all companies. Only SuperAdmin can access this endpoint. Supports filtering by company, role, status, and search by name/email. Includes pagination, sorting, and navigation URLs. Supports ETag-based caching with If-None-Match header.",
     }
 
     list_company_users: ClassVar[dict] = {
         "summary": "Purpose of this API is to list users in authenticated user's company",
-        "description": "Retrieves a paginated list of users in the authenticated user's company. Accessible by SuperAdmin, CEO, HR, and Manager. Managers receive restricted field sets (list-level visibility only, excluding sensitive fields). Employees cannot access this endpoint. Supports filtering by role, status, and search by name/email.",
+        "description": "Retrieves a paginated list of users in the authenticated user's company. Accessible by SuperAdmin, CEO, HR, and Manager. Managers receive restricted field sets (list-level visibility only, excluding sensitive fields). Employees cannot access this endpoint. Supports filtering by role, status, and search by name/email. Supports ETag-based caching with If-None-Match header.",
     }
 
     get_user_detail: ClassVar[dict] = {
@@ -68,5 +68,10 @@ class UserApiDocs:
     resend_invitation: ClassVar[dict] = {
         "summary": "Purpose of this API is to resend invitation to user with new token",
         "description": "Resends an invitation to a user by generating a new invitation token and expiry (24 hours from current time). Accessible by SuperAdmin, CEO, and HR. SuperAdmin can resend invitations to any user across any company. CEO and HR can only resend invitations to users in their own company. Re-invitation is allowed for any user (even if previously activated and deactivated). Increments reinvite_count and updates last_reinvite_at. Does not change user's role, company, or is_active status.",
+    }
+
+    update_user_status: ClassVar[dict] = {
+        "summary": "Purpose of this API is to update user activation status",
+        "description": "Unified endpoint for activating and deactivating users. Use status 'ACTIVE' to activate or 'INACTIVE' to deactivate. Accessible by SuperAdmin, CEO, and HR. SuperAdmin can update any user's status across any company. CEO and HR can only update users in their own company. Deactivated users retain all historical data. Users cannot deactivate their own accounts. Requires If-Match header for concurrency control.",
     }
 

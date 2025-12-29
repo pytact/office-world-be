@@ -104,6 +104,7 @@ class EmployeeRepository:
         department: Optional[str] = None,
         employment_status: Optional[str] = None,
         exclude_ceo_hr: bool = False,  # For Manager role - exclude CEO and HR employees
+        role_code: Optional[str] = None,  # Filter by role code (e.g., 'hr', 'manager', 'ceo', 'employee')
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> tuple[list[Employee], int]:
@@ -151,6 +152,33 @@ class EmployeeRepository:
 
         if employment_status is not None:
             query = query.where(Employee.employment_status == employment_status)
+
+        # Filter by role_code if provided
+        if role_code is not None:
+            from src.permissions.models import UserRoleAssignment, Role
+            
+            # Normalize role_code to lowercase for case-insensitive matching
+            role_code_lower = role_code.lower()
+            
+            # First, get the role_id from role_code
+            role_subquery = (
+                select(Role.id)
+                .where(Role.code == role_code_lower)
+            )
+            
+            # Filter employees whose users have the specified role assignment
+            # Only include active, non-deleted role assignments for the same company
+            query = query.where(
+                Employee.user_id.in_(
+                    select(UserRoleAssignment.user_id)
+                    .where(
+                        UserRoleAssignment.role_id.in_(role_subquery),
+                        UserRoleAssignment.company_id == company_id,
+                        UserRoleAssignment.is_active.is_(True),
+                        UserRoleAssignment.deleted_at.is_(None),
+                    )
+                )
+            )
 
         # For Manager role - exclude CEO and HR employees
         if exclude_ceo_hr:

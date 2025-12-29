@@ -78,7 +78,7 @@ Each task has exactly one owner, set at creation
 
 Task owner cannot be changed after creation
 
-Only the task owner can change task status
+Task owner or Editor can change task status
 
 Hard deletion of tasks is allowed
 
@@ -120,11 +120,11 @@ None identified at this stage
 
  Viewer permissions allow view-only access
 
- Editor permissions allow editing and commenting but not reassignment or status changes
+ Editor permissions allow editing, commenting, and status changes but not reassignment
 
  Task statuses include TODO, IN_PROGRESS, HALT, REVIEW, DONE, CANCELLED
 
- Only the task owner can change task status
+ Task owner or Editor can change task status
 
  Tasks can exist with or without a project
 

@@ -80,10 +80,10 @@ class RoleApiDep:
         self.service = RoleService(session)
         self.session = session
 
-    async def list_roles(self, query):
-        """List roles with pagination, filtering, and sorting."""
-        return await self.service.list_roles(query)
+    async def list_roles(self, query, if_none_match: Optional[str] = None):
+        """List roles with pagination, filtering, and sorting with ETag support."""
+        return await self.service.list_roles(query, if_none_match=if_none_match)
 
-    async def get_role_by_id(self, role_id: UUID):
-        """Get role by ID."""
-        return await self.service.get_role_by_id(role_id)
+    async def get_role_by_id(self, role_id: UUID, if_none_match: Optional[str] = None):
+        """Get role by ID with ETag support."""
+        return await self.service.get_role_by_id(role_id, if_none_match=if_none_match)

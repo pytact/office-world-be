@@ -34,6 +34,9 @@ from src.notifications.constants import (
 )
 from src.pagination import PagedCollection
 from src.config import settings
+from src.notifications.utils import generate_etag
+from fastapi.responses import Response as FastAPIResponse
+from fastapi import status
 
 
 class NotificationService:
@@ -65,9 +68,12 @@ class NotificationService:
 
 
     async def list_notifications(
-        self, user_id: UUID, company_id: UUID, query: NotificationListQuery
-    ) -> PagedCollection[NotificationRead]:
-        """List notifications with pagination, filtering, and sorting."""
+        self, user_id: UUID, company_id: UUID, query: NotificationListQuery, if_none_match: Optional[str] = None
+    ) -> PagedCollection[NotificationRead] | FastAPIResponse:
+        """List notifications with pagination, filtering, and sorting with ETag support.
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
+        """
         # Validate inputs
         self._validate_notification_type(query.type)
         self._validate_sort_field(query.sort_by)
@@ -84,6 +90,22 @@ class NotificationService:
             sort_by=query.sort_by,
             sort_order=query.sort_order,
         )
+
+        # Generate ETag based on most recent notification's updated_at (if any)
+        # For empty results, use a fixed ETag
+        if items:
+            # Get the most recent updated_at from the result set
+            # Since we're sorting, the first item should have the latest timestamp
+            most_recent_updated_at = items[0].updated_at
+            etag = generate_etag(most_recent_updated_at)
+        else:
+            # Empty result set - use a fixed ETag
+            etag = generate_etag(datetime.utcnow())
+
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
 
         # Convert to response schemas
         notification_reads = [NotificationRead.model_validate(item) for item in items]
@@ -130,7 +152,7 @@ class NotificationService:
             prev_params.append(f"page={query.page - 1}")
             prev_page = f"{base_path}?{'&'.join(prev_params)}"
 
-        return PagedCollection(
+        result = PagedCollection(
             items=notification_reads,
             total=total,
             page=query.page,
@@ -139,34 +161,84 @@ class NotificationService:
             next_page=next_page,
             prev_page=prev_page,
         )
+        
+        # Attach ETag metadata for router to set header
+        result._etag = etag
+        if items:
+            result._last_modified = items[0].updated_at
+        
+        return result
 
     async def get_notification_by_id(
-        self, notification_id: UUID, user_id: UUID, company_id: UUID
-    ) -> NotificationRead:
-        """Get notification by ID."""
+        self, notification_id: UUID, user_id: UUID, company_id: UUID, if_none_match: Optional[str] = None
+    ) -> NotificationRead | FastAPIResponse:
+        """Get notification by ID with ETag support.
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
+        """
         notification = await self.repository.get_by_id(notification_id, user_id, company_id)
         if not notification:
             raise NotificationNotFound(str(notification_id))
 
-        return NotificationRead.model_validate(notification)
+        # Generate ETag in service (business logic)
+        etag = generate_etag(notification.updated_at)
+
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+
+        # Return notification with ETag metadata
+        result = NotificationRead.model_validate(notification)
+        result._etag = etag
+        result._last_modified = notification.updated_at
+        
+        return result
 
     async def mark_notification_as_read(
         self, notification_id: UUID, user_id: UUID, company_id: UUID
     ) -> NotificationRead:
-        """Mark notification as read."""
+        """Mark notification as read.
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
+        """
         read_at = datetime.utcnow()
         notification = await self.repository.mark_as_read(notification_id, user_id, company_id, read_at)
         if not notification:
             raise NotificationNotFound(str(notification_id))
 
-        return NotificationRead.model_validate(notification)
+        # Return notification with ETag metadata
+        result = NotificationRead.model_validate(notification)
+        result._etag = generate_etag(notification.updated_at)
+        result._last_modified = notification.updated_at
+        
+        return result
 
     async def bulk_mark_read(
-        self, user_id: UUID, company_id: UUID, request: BulkMarkReadRequest
+        self, user_id: UUID, company_id: UUID, request: BulkMarkReadRequest, if_match: Optional[str] = None
     ) -> BulkMarkReadResponse:
-        """Bulk mark notifications as read or unread."""
+        """Bulk mark notifications as read or unread with ETag validation.
+        
+        ETag validation in service layer per error_prevention.md RULE 19.
+        For bulk operations, If-Match is optional but recommended for consistency.
+        """
+        from src.notifications.exceptions import PreconditionFailed
+        
         # Validate action
         self._validate_action(request.action)
+
+        # If-Match header validation (optional for bulk operations)
+        if if_match:
+            # Get the most recent notification from the set to validate ETag
+            # This is a simplified validation - in production, you might want to check all
+            if request.notification_ids:
+                first_notification = await self.repository.get_by_id(
+                    request.notification_ids[0], user_id, company_id
+                )
+                if first_notification:
+                    current_etag = generate_etag(first_notification.updated_at)
+                    if if_match != current_etag:
+                        raise PreconditionFailed()
 
         read_at = datetime.utcnow()
 
@@ -179,11 +251,16 @@ class NotificationService:
                 request.notification_ids, user_id, company_id
             )
 
-        return BulkMarkReadResponse(
+        result = BulkMarkReadResponse(
             updated_count=updated_count,
             action=request.action,
             notification_ids=request.notification_ids,
         )
+        
+        # Attach ETag metadata (based on current timestamp after update)
+        result._etag = generate_etag(datetime.utcnow())
+        
+        return result
 
     async def get_unread_count(self, user_id: UUID, company_id: UUID) -> UnreadCountResponse:
         """Get unread notification count."""

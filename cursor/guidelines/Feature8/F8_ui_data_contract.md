@@ -138,7 +138,7 @@ Reads:
 3.3 Writes (Actions / Mutations)
 Writes:
 - update_task            // owner and editors
-- change_task_status     // owner only
+- change_task_status     // owner and editors
 - update_task_assignments
 - delete_task            // owner only
 
@@ -160,9 +160,11 @@ Derived from ownership, assignment permission, task status, and project status.
 
 3.6 UI Data Constraints
 
-Only the owner can change task status or delete the task
+Owner and Editor can change task status
 
-Editors may edit name and description only
+Owner can delete the task
+
+Editors may edit name, description, and status
 
 Viewers have read-only access
 

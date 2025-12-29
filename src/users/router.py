@@ -74,19 +74,39 @@ async def list_platform_users(
     query: PlatformUserListQuery = Depends(PlatformUserListQuery),
     api: UserApiDep = Depends(UserApiDep),
     current_user: User = Depends(get_current_superadmin),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     response: Response = None,
-) -> StandardResponse[PagedCollection[UserListItem]]:
+) -> StandardResponse[PagedCollection[UserListItem]] | FastAPIResponse:
     """List all users across platform (SuperAdmin only).
     
     Based on F1A_api_spec.md Section 5.1 - GET /api/v1/users.
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
-    # X-Request-ID is handled by middleware
-    result = await api.list_platform_users(query)
-    return StandardResponse(
+    # Handle empty strings for If-None-Match
+    if_none_match_value = if_none_match if if_none_match and if_none_match.strip() else None
+    
+    result = await api.list_platform_users(query, if_none_match=if_none_match_value)
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = generate_request_id(x_request_id)
+        return result
+    
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_USERS_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = generate_request_id(x_request_id)
+    
+    # Set ETag and Last-Modified headers if available
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    
+    return json_response
 
 
 @router.get(
@@ -102,12 +122,14 @@ async def list_company_users(
     api: UserApiDep = Depends(UserApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_company_user),
     role: str = Depends(get_user_role_from_token),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     response: Response = None,
-) -> StandardResponse[PagedCollection[UserListItem]]:
+) -> StandardResponse[PagedCollection[UserListItem]] | FastAPIResponse:
     """List users in a specific company.
     
     Based on F1A_api_spec.md Section 5.2 - GET /api/v1/companies/{company_id}/users.
+    ETag logic in service layer per error_prevention.md RULE 19.
     
     Authorization:
     - SuperAdmin: Can access any company
@@ -143,7 +165,15 @@ async def list_company_users(
     # Determine field visibility based on role
     include_sensitive = role_lower != ROLE_CODE_MANAGER.lower()
     
-    result = await api.list_company_users(company_id, query, include_sensitive=include_sensitive)
+    # Handle empty strings for If-None-Match
+    if_none_match_value = if_none_match if if_none_match and if_none_match.strip() else None
+    
+    result = await api.list_company_users(company_id, query, include_sensitive=include_sensitive, if_none_match=if_none_match_value)
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
     
     # Update pagination URLs with company_id
     from src.config import settings
@@ -180,10 +210,20 @@ async def list_company_users(
     else:
         result.prev_page = None
     
-    return StandardResponse(
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_USERS_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    
+    # Set ETag and Last-Modified headers if available
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    
+    return json_response
 
 
 @router.get(
@@ -536,8 +576,8 @@ async def reassign_user_company(
 @router.patch(
     "/users/{user_id}/status",
     response_model=StandardResponse[UserRead],
-    summary="Update user activation status",
-    description="Unified endpoint for activating and deactivating users. Use status 'ACTIVE' to activate or 'INACTIVE' to deactivate.",
+    summary=UserApiDocs.update_user_status["summary"],
+    description=UserApiDocs.update_user_status["description"],
 )
 async def update_user_status(
     request: Request,

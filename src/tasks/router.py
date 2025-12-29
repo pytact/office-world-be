@@ -260,7 +260,7 @@ async def update_task(
     
     Authorization:
     - Name/Description: Owner or Editor
-    - Status: Owner only
+    - Status: Owner or Editor
     - Assignments: Owner, CEO, or Manager
     
     Requires If-Match header for concurrency control.

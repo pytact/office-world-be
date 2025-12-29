@@ -17,7 +17,7 @@ class EmployeeApiDocs:
     
     list: ClassVar[dict] = {
         "summary": "Purpose of this API is to list employees with pagination, search, filtering, and sorting",
-        "description": "Retrieves a paginated list of employees in the authenticated user's company. Supports filtering by department and employment_status, search by name/email, and sorting. Soft-deleted employees are excluded. CEO and HR see all employees with full fields. Manager sees all fields but cannot see CEO or HR employee records. Employee role has no access. Requires JWT authentication."
+        "description": "Retrieves a paginated list of employees in the authenticated user's company. Supports filtering by department and employment_status, search by name/email, and sorting. Soft-deleted employees are excluded. CEO and HR see all employees with full fields. Manager and Employee see all fields but cannot see CEO or HR employee records. Requires JWT authentication."
     }
     
     create: ClassVar[dict] = {
@@ -27,7 +27,7 @@ class EmployeeApiDocs:
     
     get: ClassVar[dict] = {
         "summary": "Purpose of this API is to get employee details with role-based field visibility",
-        "description": "Retrieves detailed employee information. CEO and HR see all fields. Manager sees all fields. Employee role has no access. Includes derived fields (can_edit_employee, can_deactivate, can_soft_delete) based on role and employee state. Soft-deleted employees are not accessible. Requires If-None-Match header for cache validation (optional)."
+        "description": "Retrieves detailed employee information. CEO, HR, Manager, and Employee roles can view employee details from their company. All roles see all fields. Includes derived fields (can_edit_employee, can_deactivate, can_soft_delete) based on role and employee state. Soft-deleted employees are not accessible. Requires If-None-Match header for cache validation (optional)."
     }
     
     update: ClassVar[dict] = {

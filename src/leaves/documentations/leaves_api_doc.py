@@ -11,7 +11,7 @@ class LeaveApiDocs:
 
     create: ClassVar[dict] = {
         "summary": "Purpose of this API is to create a new leave request",
-        "description": "Creates a new leave request for the authenticated user. Requires manager_approver_id and hr_approver_id (both must be in the same company). Validates overlapping leave requests, non-working days (weekends/holidays), and employee active status. Calculates number_of_days from date range and day_type. Sets initial manager_status to PENDING_MANAGER and hr_status to PENDING_HR. Triggers notification to manager approver. Only active employees can create leave requests."
+        "description": "Creates a new leave request for the authenticated user. Requires manager_approver_id and hr_approver_id (both must be in the same company). Validates overlapping leave requests, non-working days (weekends/holidays), and employee active status. Calculates number_of_days from date range and day_type. Sets initial manager_status to PENDING_MANAGER and hr_status to PENDING_HR. Triggers notification to manager approver and HR approver. Only active employees can create leave requests."
     }
 
     get: ClassVar[dict] = {
@@ -21,6 +21,6 @@ class LeaveApiDocs:
 
     action: ClassVar[dict] = {
         "summary": "Purpose of this API is to approve, reject, or cancel a leave request",
-        "description": "Performs approve, reject, or cancel action on a leave request. Approve: User must be the assigned approver at the current workflow stage. Reject: User must be the assigned approver at the current workflow stage, rejection_reason is mandatory. Cancel: Only the applicant can cancel, and only if status is pending. Requires If-Match header for concurrency control. Triggers notifications on approve/reject (not on cancel). Updates workflow status and timestamps accordingly."
+        "description": "Performs approve, reject, or cancel action on a leave request. Approve: User must be the assigned approver at the current workflow stage. Reject: User must be the assigned approver at the current workflow stage, rejection_reason is mandatory. Cancel: Only the applicant can cancel, and only if status is pending. Requires If-Match header for concurrency control. Triggers notifications on approve/reject/cancel. Updates workflow status and timestamps accordingly."
     }
 

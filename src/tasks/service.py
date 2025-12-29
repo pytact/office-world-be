@@ -12,6 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import status
 from fastapi.responses import Response as FastAPIResponse
 
+from src.celery_worker import (
+    send_task_created_notification,
+    send_task_updated_notification,
+    send_task_status_changed_notification,
+    send_task_assigned_notification,
+    send_task_unassigned_notification,
+    send_task_permission_changed_notification,
+    send_task_deleted_notification,
+)
+
 from src.tasks.repository import TaskRepository
 from src.tasks.schemas import (
     TaskCreate,
@@ -111,13 +121,16 @@ class TaskService:
         
         # Calculate permissions
         # CEO/Manager can edit and manage assignments for any company task
-        # But only owner can change status (per spec Section 3.1)
+        # Owner and Editor can change status
         can_edit_task = (
             is_owner 
             or user_permission == PERMISSION_EDITOR 
             or role_lower in ["ceo", "manager"]
         )
-        can_change_status = is_owner  # Only owner can change status (CEO/Manager can only change status for tasks they own)
+        can_change_status = (
+            is_owner 
+            or user_permission == PERMISSION_EDITOR
+        )  # Owner and Editor can change status
         can_manage_assignments = (
             is_owner 
             or role_lower in ["ceo", "manager"]
@@ -616,6 +629,60 @@ class TaskService:
         result._etag = generate_etag(task.updated_at)
         result._last_modified = task.updated_at
         
+        # Send notifications
+        # Get owner name for notifications
+        owner_name = "Unknown"
+        if owner_employee and owner_employee.user:
+            owner_name = f"{owner_employee.user.first_name} {owner_employee.user.last_name}".strip()
+        
+        # Get project name for notifications
+        project_name = task.project.name if task.project else None
+        
+        # Get company name for notifications
+        company_name = task.company.name if task.company else "Company"
+        
+        # Notify owner (confirmation)
+        if owner_employee and owner_employee.user:
+            try:
+                send_task_created_notification.delay(
+                    recipient_email=owner_employee.user.email,
+                    recipient_name=owner_name,
+                    recipient_user_id=str(owner_employee.user_id),
+                    task_id=str(task.id),
+                    task_name=task.name,
+                    task_description=task.description or "",
+                    owner_name=owner_name,
+                    project_name=project_name or "",
+                    company_id=str(company_id),
+                    company_name=company_name,
+                    is_owner=True,
+                )
+            except Exception as e:
+                print(f"[TASK SERVICE] Warning: Failed to send owner notification: {str(e)}")
+        
+        # Notify assignees
+        if data.assignments:
+            for assignment_item in data.assignments:
+                # Get assignee details
+                assignee = await self.repository.get_employee_by_id(assignment_item.employee_id, company_id)
+                if assignee and assignee.user:
+                    try:
+                        send_task_assigned_notification.delay(
+                            recipient_email=assignee.user.email,
+                            recipient_name=f"{assignee.user.first_name} {assignee.user.last_name}".strip(),
+                            recipient_user_id=str(assignee.user_id),
+                            task_id=str(task.id),
+                            task_name=task.name,
+                            task_description=task.description or "",
+                            permission=assignment_item.permission,
+                            assigned_by_name=owner_name,
+                            project_name=project_name or "",
+                            company_id=str(company_id),
+                            company_name=company_name,
+                        )
+                    except Exception as e:
+                        print(f"[TASK SERVICE] Warning: Failed to send assignee notification: {str(e)}")
+        
         return result
 
     async def update_task(
@@ -639,7 +706,7 @@ class TaskService:
         - Validates ETag (If-Match header required)
         - Validates user permissions for each update type:
           * Name/Description: owner or editor
-          * Status: owner only
+          * Status: owner or editor
           * Assignments: owner, CEO, or Manager
         - Validates task is not in terminal state (for name/description updates)
         - Validates task project is not INACTIVE/COMPLETED (if linked)
@@ -686,7 +753,7 @@ class TaskService:
             is_task_read_only,
         ) = self._check_user_permission(current_task, user_id, employee_id, role)
         
-        # Validate status update permission (owner only)
+        # Validate status update permission (owner or editor)
         if data.status is not None:
             if not can_change_status:
                 raise InsufficientPermissionsStatus()
@@ -731,6 +798,11 @@ class TaskService:
         
         updated_task = await self.repository.update(current_task)
         
+        # Reload task with eager loading after update (refresh may clear relationships)
+        updated_task = await self.repository.get_by_id(task_id, company_id)
+        if not updated_task:
+            raise TaskNotFound(str(task_id))
+        
         # Handle assignments if provided
         # Both add and remove are optional - if not provided or empty, that operation is skipped
         if data.assignments is not None:
@@ -758,10 +830,40 @@ class TaskService:
                         task_id, add_item.employee_id
                     )
                     if existing:
+                        # Store old permission for notification
+                        old_permission = existing.permission
                         # Update existing assignment permission
                         existing.permission = add_item.permission
                         existing.updated_by = user_id
                         await self.repository.update_assignment(existing)
+                        
+                        # Send permission change notification if permission actually changed
+                        if old_permission != add_item.permission:
+                            assignee = await self.repository.get_employee_by_id(add_item.employee_id, company_id)
+                            if assignee and assignee.user:
+                                # Get updater name for notification
+                                updater_employee = await self.repository.get_employee_by_id(employee_id, company_id) if employee_id else None
+                                updater_name = "Unknown"
+                                if updater_employee and updater_employee.user:
+                                    updater_name = f"{updater_employee.user.first_name} {updater_employee.user.last_name}".strip()
+                                
+                                company_name = updated_task.company.name if updated_task.company else "Company"
+                                
+                                try:
+                                    send_task_permission_changed_notification.delay(
+                                        recipient_email=assignee.user.email,
+                                        recipient_name=f"{assignee.user.first_name} {assignee.user.last_name}".strip(),
+                                        recipient_user_id=str(assignee.user_id),
+                                        task_id=str(updated_task.id),
+                                        task_name=updated_task.name,
+                                        old_permission=old_permission,
+                                        new_permission=add_item.permission,
+                                        changed_by_name=updater_name,
+                                        company_id=str(company_id),
+                                        company_name=company_name,
+                                    )
+                                except Exception as e:
+                                    print(f"[TASK SERVICE] Warning: Failed to send permission change notification: {str(e)}")
                     else:
                         # Create new assignment
                         assignment = TaskAssignment(
@@ -854,6 +956,149 @@ class TaskService:
         result._etag = generate_etag(updated_task.updated_at)
         result._last_modified = updated_task.updated_at
         
+        # Send notifications
+        # Get updater name
+        updater_employee = await self.repository.get_employee_by_id(employee_id, company_id) if employee_id else None
+        updater_name = "Unknown"
+        if updater_employee and updater_employee.user:
+            updater_name = f"{updater_employee.user.first_name} {updater_employee.user.last_name}".strip()
+        
+        # Get company name
+        company_name = updated_task.company.name if updated_task.company else "Company"
+        
+        # Determine what was updated
+        updated_fields = []
+        if data.name is not None:
+            updated_fields.append("name")
+        if data.description is not None:
+            updated_fields.append("description")
+        
+        # Send update notification for name/description changes
+        if updated_fields:
+            updated_fields_str = ", ".join(updated_fields)
+            
+            # Notify owner (if not the updater)
+            if updated_task.owner and updated_task.owner.user and updated_task.owner_id != employee_id:
+                try:
+                    send_task_updated_notification.delay(
+                        recipient_email=updated_task.owner.user.email,
+                        recipient_name=f"{updated_task.owner.user.first_name} {updated_task.owner.user.last_name}".strip(),
+                        recipient_user_id=str(updated_task.owner.user_id),
+                        task_id=str(updated_task.id),
+                        task_name=updated_task.name,
+                        updated_by_name=updater_name,
+                        updated_fields=updated_fields_str,
+                        company_id=str(company_id),
+                        company_name=company_name,
+                    )
+                except Exception as e:
+                    print(f"[TASK SERVICE] Warning: Failed to send update notification to owner: {str(e)}")
+            
+            # Notify all assignees (except the updater)
+            for assignment in updated_task.assignments:
+                if assignment.employee and assignment.employee.user and assignment.employee_id != employee_id:
+                    try:
+                        send_task_updated_notification.delay(
+                            recipient_email=assignment.employee.user.email,
+                            recipient_name=f"{assignment.employee.user.first_name} {assignment.employee.user.last_name}".strip(),
+                            recipient_user_id=str(assignment.employee.user_id),
+                            task_id=str(updated_task.id),
+                            task_name=updated_task.name,
+                            updated_by_name=updater_name,
+                            updated_fields=updated_fields_str,
+                            company_id=str(company_id),
+                            company_name=company_name,
+                        )
+                    except Exception as e:
+                        print(f"[TASK SERVICE] Warning: Failed to send update notification to assignee: {str(e)}")
+        
+        # Handle status change notification (will be sent by change_status method if status was updated)
+        # Note: If status is updated here, we'll send notification
+        if data.status is not None:
+            # Notify owner (if not the updater)
+            if updated_task.owner and updated_task.owner.user and updated_task.owner_id != employee_id:
+                try:
+                    send_task_status_changed_notification.delay(
+                        recipient_email=updated_task.owner.user.email,
+                        recipient_name=f"{updated_task.owner.user.first_name} {updated_task.owner.user.last_name}".strip(),
+                        recipient_user_id=str(updated_task.owner.user_id),
+                        task_id=str(updated_task.id),
+                        task_name=updated_task.name,
+                        old_status=current_task.status,
+                        new_status=updated_task.status,
+                        changed_by_name=updater_name,
+                        company_id=str(company_id),
+                        company_name=company_name,
+                    )
+                except Exception as e:
+                    print(f"[TASK SERVICE] Warning: Failed to send status notification to owner: {str(e)}")
+            
+            # Notify all assignees (except the updater)
+            for assignment in updated_task.assignments:
+                if assignment.employee and assignment.employee.user and assignment.employee_id != employee_id:
+                    try:
+                        send_task_status_changed_notification.delay(
+                            recipient_email=assignment.employee.user.email,
+                            recipient_name=f"{assignment.employee.user.first_name} {assignment.employee.user.last_name}".strip(),
+                            recipient_user_id=str(assignment.employee.user_id),
+                            task_id=str(updated_task.id),
+                            task_name=updated_task.name,
+                            old_status=current_task.status,
+                            new_status=updated_task.status,
+                            changed_by_name=updater_name,
+                            company_id=str(company_id),
+                            company_name=company_name,
+                        )
+                    except Exception as e:
+                        print(f"[TASK SERVICE] Warning: Failed to send status notification to assignee: {str(e)}")
+        
+        # Handle assignment notifications (add/remove)
+        # Note: These are handled in update_assignments method, but we also handle them here
+        # when assignments are updated as part of the general update
+        if data.assignments is not None:
+            project_name = updated_task.project.name if updated_task.project else None
+            
+            # Notify newly assigned employees
+            if data.assignments.add and len(data.assignments.add) > 0:
+                for add_item in data.assignments.add:
+                    assignee = await self.repository.get_employee_by_id(add_item.employee_id, company_id)
+                    if assignee and assignee.user:
+                        try:
+                            send_task_assigned_notification.delay(
+                                recipient_email=assignee.user.email,
+                                recipient_name=f"{assignee.user.first_name} {assignee.user.last_name}".strip(),
+                                recipient_user_id=str(assignee.user_id),
+                                task_id=str(updated_task.id),
+                                task_name=updated_task.name,
+                                task_description=updated_task.description or "",
+                                permission=add_item.permission,
+                                assigned_by_name=updater_name,
+                                project_name=project_name or "",
+                                company_id=str(company_id),
+                                company_name=company_name,
+                            )
+                        except Exception as e:
+                            print(f"[TASK SERVICE] Warning: Failed to send assignment notification: {str(e)}")
+            
+            # Notify removed employees
+            if data.assignments.remove and len(data.assignments.remove) > 0:
+                for remove_item in data.assignments.remove:
+                    removed_employee = await self.repository.get_employee_by_id(remove_item.employee_id, company_id)
+                    if removed_employee and removed_employee.user:
+                        try:
+                            send_task_unassigned_notification.delay(
+                                recipient_email=removed_employee.user.email,
+                                recipient_name=f"{removed_employee.user.first_name} {removed_employee.user.last_name}".strip(),
+                                recipient_user_id=str(removed_employee.user_id),
+                                task_id=str(updated_task.id),
+                                task_name=updated_task.name,
+                                removed_by_name=updater_name,
+                                company_id=str(company_id),
+                                company_name=company_name,
+                            )
+                        except Exception as e:
+                            print(f"[TASK SERVICE] Warning: Failed to send unassignment notification: {str(e)}")
+        
         return result
 
     async def change_status(
@@ -866,7 +1111,7 @@ class TaskService:
         role: str,
         if_match: Optional[str] = None,
     ) -> TaskRead:
-        """Change task status (owner only).
+        """Change task status (owner or editor).
         
         Based on F8_api_spec.md Section 4.3.5 - PATCH /api/v1/company/tasks/{task_id}/status.
         ETag logic in service layer per error_prevention.md RULE 19.
@@ -875,7 +1120,7 @@ class TaskService:
         - Validates task exists and belongs to company
         - Checks visibility access
         - Validates ETag (If-Match header required)
-        - Validates user is task owner (only owner can change status)
+        - Validates user is task owner or editor (owner or editor can change status)
         - Updates task status
         - Returns updated task detail
         """
@@ -908,7 +1153,7 @@ class TaskService:
                 ],
             )
         
-        # Check permissions (only owner can change status)
+        # Check permissions (owner or editor can change status)
         (
             is_owner,
             _,
@@ -926,6 +1171,11 @@ class TaskService:
         current_task.updated_by = user_id
         
         updated_task = await self.repository.update(current_task)
+        
+        # Reload task with eager loading after update (refresh may clear relationships)
+        updated_task = await self.repository.get_by_id(task_id, company_id)
+        if not updated_task:
+            raise TaskNotFound(str(task_id))
         
         # Recalculate derived permissions
         (
@@ -983,6 +1233,56 @@ class TaskService:
         # Attach ETag to result for router
         result._etag = generate_etag(updated_task.updated_at)
         result._last_modified = updated_task.updated_at
+        
+        # Send notifications
+        # Get changer name
+        changer_employee = await self.repository.get_employee_by_id(employee_id, company_id) if employee_id else None
+        changer_name = "Unknown"
+        if changer_employee and changer_employee.user:
+            changer_name = f"{changer_employee.user.first_name} {changer_employee.user.last_name}".strip()
+        
+        # Get company name
+        company_name = updated_task.company.name if updated_task.company else "Company"
+        
+        # Store old status for notification
+        old_status = current_task.status
+        
+        # Notify owner (if not the changer)
+        if updated_task.owner and updated_task.owner.user and updated_task.owner_id != employee_id:
+            try:
+                send_task_status_changed_notification.delay(
+                    recipient_email=updated_task.owner.user.email,
+                    recipient_name=f"{updated_task.owner.user.first_name} {updated_task.owner.user.last_name}".strip(),
+                    recipient_user_id=str(updated_task.owner.user_id),
+                    task_id=str(updated_task.id),
+                    task_name=updated_task.name,
+                    old_status=old_status,
+                    new_status=updated_task.status,
+                    changed_by_name=changer_name,
+                    company_id=str(company_id),
+                    company_name=company_name,
+                )
+            except Exception as e:
+                print(f"[TASK SERVICE] Warning: Failed to send status notification to owner: {str(e)}")
+        
+        # Notify all assignees (except the changer)
+        for assignment in updated_task.assignments:
+            if assignment.employee and assignment.employee.user and assignment.employee_id != employee_id:
+                try:
+                    send_task_status_changed_notification.delay(
+                        recipient_email=assignment.employee.user.email,
+                        recipient_name=f"{assignment.employee.user.first_name} {assignment.employee.user.last_name}".strip(),
+                        recipient_user_id=str(assignment.employee.user_id),
+                        task_id=str(updated_task.id),
+                        task_name=updated_task.name,
+                        old_status=old_status,
+                        new_status=updated_task.status,
+                        changed_by_name=changer_name,
+                        company_id=str(company_id),
+                        company_name=company_name,
+                    )
+                except Exception as e:
+                    print(f"[TASK SERVICE] Warning: Failed to send status notification to assignee: {str(e)}")
         
         return result
 
@@ -1080,10 +1380,40 @@ class TaskService:
                     task_id, add_item.employee_id
                 )
                 if existing:
+                    # Store old permission for notification
+                    old_permission = existing.permission
                     # Update existing assignment permission
                     existing.permission = add_item.permission
                     existing.updated_by = user_id
                     await self.repository.update_assignment(existing)
+                    
+                    # Send permission change notification if permission actually changed
+                    if old_permission != add_item.permission:
+                        assignee = await self.repository.get_employee_by_id(add_item.employee_id, company_id)
+                        if assignee and assignee.user:
+                            # Get updater name for notification
+                            updater_employee = await self.repository.get_employee_by_id(employee_id, company_id) if employee_id else None
+                            updater_name = "Unknown"
+                            if updater_employee and updater_employee.user:
+                                updater_name = f"{updater_employee.user.first_name} {updater_employee.user.last_name}".strip()
+                            
+                            company_name = current_task.company.name if current_task.company else "Company"
+                            
+                            try:
+                                send_task_permission_changed_notification.delay(
+                                    recipient_email=assignee.user.email,
+                                    recipient_name=f"{assignee.user.first_name} {assignee.user.last_name}".strip(),
+                                    recipient_user_id=str(assignee.user_id),
+                                    task_id=str(current_task.id),
+                                    task_name=current_task.name,
+                                    old_permission=old_permission,
+                                    new_permission=add_item.permission,
+                                    changed_by_name=updater_name,
+                                    company_id=str(company_id),
+                                    company_name=company_name,
+                                )
+                            except Exception as e:
+                                print(f"[TASK SERVICE] Warning: Failed to send permission change notification: {str(e)}")
                 else:
                     # Create new assignment
                     assignment = TaskAssignment(
@@ -1179,6 +1509,60 @@ class TaskService:
         result._etag = generate_etag(updated_task.updated_at)
         result._last_modified = updated_task.updated_at
         
+        # Send notifications
+        # Get updater name
+        updater_employee = await self.repository.get_employee_by_id(employee_id, company_id) if employee_id else None
+        updater_name = "Unknown"
+        if updater_employee and updater_employee.user:
+            updater_name = f"{updater_employee.user.first_name} {updater_employee.user.last_name}".strip()
+        
+        # Get company name
+        company_name = updated_task.company.name if updated_task.company else "Company"
+        
+        # Get project name
+        project_name = updated_task.project.name if updated_task.project else None
+        
+        # Notify newly assigned employees
+        if data.add and len(data.add) > 0:
+            for add_item in data.add:
+                assignee = await self.repository.get_employee_by_id(add_item.employee_id, company_id)
+                if assignee and assignee.user:
+                    try:
+                        send_task_assigned_notification.delay(
+                            recipient_email=assignee.user.email,
+                            recipient_name=f"{assignee.user.first_name} {assignee.user.last_name}".strip(),
+                            recipient_user_id=str(assignee.user_id),
+                            task_id=str(updated_task.id),
+                            task_name=updated_task.name,
+                            task_description=updated_task.description or "",
+                            permission=add_item.permission,
+                            assigned_by_name=updater_name,
+                            project_name=project_name or "",
+                            company_id=str(company_id),
+                            company_name=company_name,
+                        )
+                    except Exception as e:
+                        print(f"[TASK SERVICE] Warning: Failed to send assignment notification: {str(e)}")
+        
+        # Notify removed employees
+        if data.remove and len(data.remove) > 0:
+            for remove_item in data.remove:
+                removed_employee = await self.repository.get_employee_by_id(remove_item.employee_id, company_id)
+                if removed_employee and removed_employee.user:
+                    try:
+                        send_task_unassigned_notification.delay(
+                            recipient_email=removed_employee.user.email,
+                            recipient_name=f"{removed_employee.user.first_name} {removed_employee.user.last_name}".strip(),
+                            recipient_user_id=str(removed_employee.user_id),
+                            task_id=str(updated_task.id),
+                            task_name=updated_task.name,
+                            removed_by_name=updater_name,
+                            company_id=str(company_id),
+                            company_name=company_name,
+                        )
+                    except Exception as e:
+                        print(f"[TASK SERVICE] Warning: Failed to send unassignment notification: {str(e)}")
+        
         return result
 
     async def delete_task(
@@ -1245,6 +1629,49 @@ class TaskService:
         
         if not is_owner and role_lower not in ["ceo", "manager"]:
             raise InsufficientPermissionsDelete()
+        
+        # Send notifications before deleting
+        # Get deleter name
+        deleter_employee = await self.repository.get_employee_by_id(employee_id, company_id) if employee_id else None
+        deleter_name = "Unknown"
+        if deleter_employee and deleter_employee.user:
+            deleter_name = f"{deleter_employee.user.first_name} {deleter_employee.user.last_name}".strip()
+        
+        # Get company name
+        company_name = current_task.company.name if current_task.company else "Company"
+        
+        # Notify owner (if not the deleter)
+        if current_task.owner and current_task.owner.user and current_task.owner_id != employee_id:
+            try:
+                send_task_deleted_notification.delay(
+                    recipient_email=current_task.owner.user.email,
+                    recipient_name=f"{current_task.owner.user.first_name} {current_task.owner.user.last_name}".strip(),
+                    recipient_user_id=str(current_task.owner.user_id),
+                    task_id=str(current_task.id),
+                    task_name=current_task.name,
+                    deleted_by_name=deleter_name,
+                    company_id=str(company_id),
+                    company_name=company_name,
+                )
+            except Exception as e:
+                print(f"[TASK SERVICE] Warning: Failed to send deletion notification to owner: {str(e)}")
+        
+        # Notify all assignees (except the deleter)
+        for assignment in current_task.assignments:
+            if assignment.employee and assignment.employee.user and assignment.employee_id != employee_id:
+                try:
+                    send_task_deleted_notification.delay(
+                        recipient_email=assignment.employee.user.email,
+                        recipient_name=f"{assignment.employee.user.first_name} {assignment.employee.user.last_name}".strip(),
+                        recipient_user_id=str(assignment.employee.user_id),
+                        task_id=str(current_task.id),
+                        task_name=current_task.name,
+                        deleted_by_name=deleter_name,
+                        company_id=str(company_id),
+                        company_name=company_name,
+                    )
+                except Exception as e:
+                    print(f"[TASK SERVICE] Warning: Failed to send deletion notification to assignee: {str(e)}")
         
         # Hard delete task
         await self.repository.delete(current_task)

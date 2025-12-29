@@ -32,7 +32,7 @@ class TaskApiDocs:
 
     change_status: ClassVar[dict] = {
         "summary": "Purpose of this API is to change task status",
-        "description": "Changes task status. Only task owner can change status. Owner can move task to any status at any time. DONE and CANCELLED are terminal states. Requires If-Match header for concurrency control.",
+        "description": "Changes task status. Task owner or editor can change status. Owner and editor can move task to any status at any time. DONE and CANCELLED are terminal states. Requires If-Match header for concurrency control.",
     }
 
     update_assignments: ClassVar[dict] = {

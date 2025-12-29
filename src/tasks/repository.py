@@ -40,9 +40,9 @@ class TaskRepository:
             select(Task)
             .options(
                 selectinload(Task.company),  # CRITICAL: Eager load company
-                selectinload(Task.owner),  # CRITICAL: Eager load owner
+                selectinload(Task.owner).selectinload(Employee.user),  # CRITICAL: Eager load owner with user
                 selectinload(Task.project),  # CRITICAL: Eager load project
-                selectinload(Task.assignments).selectinload(TaskAssignment.employee),  # CRITICAL: Eager load assignments with employee
+                selectinload(Task.assignments).selectinload(TaskAssignment.employee).selectinload(Employee.user),  # CRITICAL: Eager load assignments with employee and user
             )
             .where(
                 Task.id == task_id,
@@ -126,9 +126,9 @@ class TaskRepository:
             select(Task)
             .options(
                 selectinload(Task.company),  # CRITICAL: Eager load company
-                selectinload(Task.owner),  # CRITICAL: Eager load owner
+                selectinload(Task.owner).selectinload(Employee.user),  # CRITICAL: Eager load owner with user
                 selectinload(Task.project),  # CRITICAL: Eager load project
-                selectinload(Task.assignments).selectinload(TaskAssignment.employee),  # CRITICAL: Eager load assignments with employee
+                selectinload(Task.assignments).selectinload(TaskAssignment.employee).selectinload(Employee.user),  # CRITICAL: Eager load assignments with employee and user
             )
             .where(
                 Task.company_id == company_id,
@@ -225,7 +225,7 @@ class TaskRepository:
         result = await self.session.execute(
             select(TaskAssignment)
             .options(
-                selectinload(TaskAssignment.employee),  # CRITICAL: Eager load employee
+                selectinload(TaskAssignment.employee).selectinload(Employee.user),  # CRITICAL: Eager load employee with user
             )
             .where(TaskAssignment.task_id == task_id)
         )
@@ -246,7 +246,7 @@ class TaskRepository:
         result = await self.session.execute(
             select(TaskAssignment)
             .options(
-                selectinload(TaskAssignment.employee),  # CRITICAL: Eager load employee
+                selectinload(TaskAssignment.employee).selectinload(Employee.user),  # CRITICAL: Eager load employee with user
             )
             .where(
                 TaskAssignment.task_id == task_id,

@@ -74,6 +74,15 @@ from src.users.models import User
 from src.pagination import PagedCollection
 
 
+class ListWithMetadata(list):
+    """A list subclass that supports arbitrary attribute assignment.
+    
+    Used to attach ETag and Last-Modified metadata to list responses
+    while maintaining list behavior for serialization.
+    """
+    pass
+
+
 class SalaryService:
     """Service for salary management business logic.
     
@@ -176,8 +185,9 @@ class SalaryService:
         self,
         employee_id: UUID,
         company_id: Optional[UUID],
-    ) -> list[SalaryHistoryResponse]:
-        """Get salary history for an employee.
+        if_none_match: Optional[str] = None,
+    ) -> list[SalaryHistoryResponse] | FastAPIResponse:
+        """Get salary history for an employee with ETag support.
         
         HR / CEO only.
         
@@ -185,6 +195,8 @@ class SalaryService:
         - Validates employee exists and belongs to company
         - Gets all salary history records for the employee
         - Returns list of salary history entries
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
         """
         # Get employee
         employee = await self.repository.get_employee_by_id(employee_id, company_id)
@@ -193,10 +205,11 @@ class SalaryService:
         
         # Get active salary to get its history
         active_salary = await self.repository.get_active_salary_details(employee_id)
+        history_list = ListWithMetadata()
+        
         if not active_salary:
             # If no active salary, get all salary details and their history
             all_salaries = await self.repository.get_all_salary_details(employee_id)
-            history_list = []
             for salary in all_salaries:
                 history_records = await self.repository.get_salary_history_by_salary_details_id(salary.id)
                 for history in history_records:
@@ -211,28 +224,44 @@ class SalaryService:
                             created_at=history.created_at,
                         )
                     )
-            # Sort by created_at descending (newest first)
-            history_list.sort(key=lambda x: x.created_at, reverse=True)
-            return history_list
-        
-        # Get salary history for active salary
-        history_records = await self.repository.get_salary_history_by_salary_details_id(active_salary.id)
-        history_list = []
-        for history in history_records:
-            changed_by_name = await self._get_user_name(history.changed_by)
-            history_list.append(
-                SalaryHistoryResponse(
-                    id=history.id,
-                    previous_amount=history.previous_amount,
-                    new_amount=history.new_amount,
-                    effective_from=history.effective_from,
-                    changed_by=changed_by_name,
-                    created_at=history.created_at,
+        else:
+            # Get salary history for active salary
+            history_records = await self.repository.get_salary_history_by_salary_details_id(active_salary.id)
+            for history in history_records:
+                changed_by_name = await self._get_user_name(history.changed_by)
+                history_list.append(
+                    SalaryHistoryResponse(
+                        id=history.id,
+                        previous_amount=history.previous_amount,
+                        new_amount=history.new_amount,
+                        effective_from=history.effective_from,
+                        changed_by=changed_by_name,
+                        created_at=history.created_at,
+                    )
                 )
-            )
         
         # Sort by created_at descending (newest first)
         history_list.sort(key=lambda x: x.created_at, reverse=True)
+        
+        # Generate ETag based on most recent history entry's created_at
+        if history_list:
+            most_recent_created_at = history_list[0].created_at
+            etag = generate_etag(most_recent_created_at)
+        else:
+            # Empty result set - use current timestamp
+            etag = generate_etag(datetime.now(timezone.utc))
+        
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+        
+        # Attach ETag metadata to the list itself (Python allows this)
+        # Router will extract from the list object
+        history_list._etag = etag
+        if history_list:
+            history_list._last_modified = history_list[0].created_at
+        
         return history_list
 
     async def create_salary(
@@ -1208,8 +1237,9 @@ class SalaryService:
         page_size: int = 20,
         sort_by: str = "paid_on",
         sort_order: str = "desc",
-    ) -> SalaryPaymentPaginatedResponse:
-        """List salary payments by month/year across company.
+        if_none_match: Optional[str] = None,
+    ) -> SalaryPaymentPaginatedResponse | FastAPIResponse:
+        """List salary payments by month/year across company with ETag support.
         
         Used for:
         - Payroll reports
@@ -1220,6 +1250,8 @@ class SalaryService:
         - Gets all salary payments for the specified month/year
         - Filters by company_id if provided
         - Returns paginated results
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
         """
         items, total = await self.repository.list_salary_payments_by_month_year(
             company_id=company_id,
@@ -1230,6 +1262,21 @@ class SalaryService:
             sort_by=sort_by,
             sort_order=sort_order,
         )
+        
+        # Generate ETag based on most recent payment's created_at (if any)
+        # Note: SalaryPayment is immutable, so we use created_at instead of updated_at
+        if items:
+            # Get the most recent created_at from the result set
+            most_recent_created_at = items[0].created_at
+            etag = generate_etag(most_recent_created_at)
+        else:
+            # Empty result set - use current timestamp
+            etag = generate_etag(datetime.now(timezone.utc))
+        
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
         
         # Convert to response schemas
         payment_items = []
@@ -1258,21 +1305,30 @@ class SalaryService:
         # Build pagination metadata
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         
-        return SalaryPaymentPaginatedResponse(
+        result = SalaryPaymentPaginatedResponse(
             items=payment_items,
             total=total,
             page=page,
             page_size=page_size,
             total_pages=total_pages,
         )
+        
+        # Attach ETag metadata for router
+        result._etag = etag
+        if items:
+            # Note: SalaryPayment is immutable, so we use created_at instead of updated_at
+            result._last_modified = items[0].created_at
+        
+        return result
 
     async def list_salary_payments(
         self,
         employee_id: UUID,
         company_id: Optional[UUID],
         query: SalaryPaymentListQuery,
-    ) -> SalaryPaymentPaginatedResponse:
-        """List salary payments with pagination, filtering, and sorting.
+        if_none_match: Optional[str] = None,
+    ) -> SalaryPaymentPaginatedResponse | FastAPIResponse:
+        """List salary payments with pagination, filtering, and sorting with ETag support.
         
         Based on F6_api_spec.md Section 4.3.5 - GET /v1/company/employees/{employee_id}/salary/payments.
         
@@ -1281,6 +1337,8 @@ class SalaryService:
         - Gets paginated payments from repository
         - Converts to response schemas
         - Builds pagination metadata
+        
+        ETag logic in service layer per error_prevention.md RULE 19.
         """
         # Get employee
         employee = await self.repository.get_employee_by_id(employee_id, company_id)
@@ -1298,6 +1356,21 @@ class SalaryService:
             sort_by=query.sort_by,
             sort_order=query.sort_order,
         )
+        
+        # Generate ETag based on most recent payment's created_at (if any)
+        # Note: SalaryPayment is immutable, so we use created_at instead of updated_at
+        if items:
+            # Get the most recent created_at from the result set
+            most_recent_created_at = items[0].created_at
+            etag = generate_etag(most_recent_created_at)
+        else:
+            # Empty result set - use current timestamp
+            etag = generate_etag(datetime.now(timezone.utc))
+        
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
         
         # Convert to response schemas
         payment_items = []
@@ -1346,7 +1419,7 @@ class SalaryService:
         if query.page > 1:
             prev_page = f"/v1/company/employees/{employee_id}/salary/payments?page={query.page - 1}&{query_params_str}"
         
-        return SalaryPaymentPaginatedResponse(
+        result = SalaryPaymentPaginatedResponse(
             items=payment_items,
             total=total,
             page=query.page,
@@ -1355,6 +1428,14 @@ class SalaryService:
             next_page=next_page,
             prev_page=prev_page,
         )
+        
+        # Attach ETag metadata for router
+        result._etag = etag
+        if items:
+            # Note: SalaryPayment is immutable, so we use created_at instead of updated_at
+            result._last_modified = items[0].created_at
+        
+        return result
 
     async def update_salary_payment(
         self,

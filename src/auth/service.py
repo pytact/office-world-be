@@ -349,6 +349,15 @@ class AuthService:
         if not is_super_admin and role_assignment.company:
             is_company_active = role_assignment.company.is_active
         
+        # Get employee_id if user has an employee record (only for company-scoped users)
+        employee_id: UUID | None = None
+        if not is_super_admin and role_assignment.company_id:
+            from src.employees.repository import EmployeeRepository
+            employee_repo = EmployeeRepository(self.session)
+            employee = await employee_repo.get_by_user_id(user.id, role_assignment.company_id)
+            if employee:
+                employee_id = employee.id
+        
         # Build UserDetails
         user_details = UserDetails(
             user_id=user.id,
@@ -356,6 +365,7 @@ class AuthService:
             first_name=user.first_name,
             last_name=user.last_name,
             is_active=user.is_active,
+            employee_id=employee_id,
             created_at=user.created_at,
             updated_at=user.updated_at,
         )

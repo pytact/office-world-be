@@ -3,8 +3,9 @@
 **Project Name:** OfficeWorld
 **Prepared By:** Ravi
 **Reviewed By:** Shahid
-**Issue Date:** 2025-01-23
 
+
+**Issue Date:** 2025-01-23
 
 ## Summary of Identified Issues
 
@@ -129,6 +130,42 @@ Each domain file **must explain how the feature works in practice**, including:
 * Validation and failure scenarios
 
 
+**Issue Date:** 2025-01-23
+**Domain File:** F10_domain_model.md
+
+## Issue 6 - Display a live working-time counter for the current day
+
+### Problem
+
+* No clear explanation of how live working time will be displayed (continuous API calls, webhook, etc.).
+
+## Issue 7 - SuperAdmin access to attendance data. f10_File: feature_file.md
+
+## Problem
+
+* If SuperAdmin cannot access employees, how can they access attendance?
 
 
+## Issue 8 - Only one check-in and one check-out per day and Check-out is mandatory
 
+## Problem
+
+* What if the user forgets to check out? How are we going to handel this case.
+
+## Issue 9 - Deactivated employees may view history but cannot check in/out
+
+## Problem
+
+* Deactivated employees cannot log in, so how can they view history?
+
+## Issue 10 - F10_ui_data_contract.md define: SuperAdmin must never receive attendance data and F10_feature_file.md defines:SuperAdmin access to attendance data
+
+## Problem
+
+* UI contract says SuperAdmin must never access attendance data, but feature file says they can.
+
+## Issue 11 -F10_ui_data_contract.md: Read-only for all roles 
+
+## Problem
+
+* Conflicting statements: read-only for all roles vs attendance visible to roles.

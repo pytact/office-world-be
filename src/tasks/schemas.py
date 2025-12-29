@@ -239,7 +239,7 @@ class TaskUpdate(BaseModel):
     )
     status: Optional[str] = Field(
         None,
-        description="New task status (TODO, IN_PROGRESS, HALT, REVIEW, DONE, CANCELLED). Only owner can change status.",
+        description="New task status (TODO, IN_PROGRESS, HALT, REVIEW, DONE, CANCELLED). Owner or Editor can change status.",
     )
     assignments: Optional[TaskAssignmentUpdate] = Field(
         None,
@@ -337,7 +337,7 @@ class TaskRead(BaseModel):
     is_owner: bool = Field(..., description="True if authenticated user is task owner")
     user_permission: str = Field(..., description="User permission: OWNER, EDITOR, or VIEWER")
     can_edit_task: bool = Field(..., description="True if owner or editor")
-    can_change_status: bool = Field(..., description="True if owner only")
+    can_change_status: bool = Field(..., description="True if owner or editor")
     can_manage_assignments: bool = Field(..., description="True if owner only")
     is_task_read_only: bool = Field(..., description="True if task is in terminal state or user is VIEWER")
     
@@ -360,7 +360,7 @@ class TaskSummary(BaseModel):
     is_owner: bool = Field(..., description="True if authenticated user is task owner")
     user_permission: str = Field(..., description="User permission: OWNER, EDITOR, or VIEWER")
     can_edit_task: bool = Field(..., description="True if owner or editor")
-    can_change_status: bool = Field(..., description="True if owner only")
+    can_change_status: bool = Field(..., description="True if owner or editor")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last modification timestamp")
     

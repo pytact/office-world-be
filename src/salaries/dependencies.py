@@ -168,11 +168,13 @@ class SalaryApiDep:
         self,
         employee_id: UUID,
         company_id: Optional[UUID],
+        if_none_match: Optional[str] = None,
     ):
-        """Get salary history for employee."""
+        """Get salary history for employee with ETag support."""
         return await self.service.get_salary_history(
             employee_id=employee_id,
             company_id=company_id,
+            if_none_match=if_none_match,
         )
 
     async def create_salary(
@@ -319,12 +321,14 @@ class SalaryApiDep:
         employee_id: UUID,
         company_id: Optional[UUID],
         query: SalaryPaymentListQuery,
+        if_none_match: Optional[str] = None,
     ):
-        """List salary payments."""
+        """List salary payments with ETag support."""
         return await self.service.list_salary_payments(
             employee_id=employee_id,
             company_id=company_id,
             query=query,
+            if_none_match=if_none_match,
         )
 
     async def run_salary_payment(
@@ -349,8 +353,9 @@ class SalaryApiDep:
         page_size: int = 20,
         sort_by: str = "paid_on",
         sort_order: str = "desc",
+        if_none_match: Optional[str] = None,
     ):
-        """List salary payments by month/year across company."""
+        """List salary payments by month/year across company with ETag support."""
         return await self.service.list_salary_payments_by_month_year(
             company_id=company_id,
             month=month,
@@ -359,6 +364,7 @@ class SalaryApiDep:
             page_size=page_size,
             sort_by=sort_by,
             sort_order=sort_order,
+            if_none_match=if_none_match,
         )
 
     async def get_salary_slip(

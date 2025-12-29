@@ -280,3 +280,14 @@ class NotificationRepository:
             await self.session.commit()
 
         return updated_count
+
+    async def create(self, notification: Notification) -> Notification:
+        """Create a new notification record.
+        
+        Pure database operation - no business logic.
+        Used for creating both email and in-app notification records.
+        """
+        self.session.add(notification)
+        await self.session.commit()
+        await self.session.refresh(notification)
+        return notification

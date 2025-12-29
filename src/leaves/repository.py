@@ -16,12 +16,13 @@ class LeaveRepository:
 
     async def get_by_id(self, leave_id: UUID) -> Optional[LeaveRequest]:
         """Get leave request by ID with eager loading."""
+        from src.employees.models import Employee
         result = await self.session.execute(
             select(LeaveRequest)
             .options(
-                selectinload(LeaveRequest.employee),
-                selectinload(LeaveRequest.manager_approver),
-                selectinload(LeaveRequest.hr_approver),
+                selectinload(LeaveRequest.employee).selectinload(Employee.user),
+                selectinload(LeaveRequest.manager_approver).selectinload(Employee.user),
+                selectinload(LeaveRequest.hr_approver).selectinload(Employee.user),
                 selectinload(LeaveRequest.company)
             )
             .where(
@@ -72,11 +73,26 @@ class LeaveRepository:
         return result.scalars().all()
 
     async def create(self, leave_request: LeaveRequest) -> LeaveRequest:
-        """Create new leave request."""
+        """Create new leave request with eager loading of relationships."""
         self.session.add(leave_request)
         await self.session.commit()
         await self.session.refresh(leave_request)
-        return leave_request
+        
+        # Eagerly load relationships to avoid lazy loading issues in async context
+        # Also load user relationships for employee, manager_approver, and hr_approver
+        from src.employees.models import Employee
+        result = await self.session.execute(
+            select(LeaveRequest)
+            .options(
+                selectinload(LeaveRequest.employee).selectinload(Employee.user),
+                selectinload(LeaveRequest.manager_approver).selectinload(Employee.user),
+                selectinload(LeaveRequest.hr_approver).selectinload(Employee.user),
+                selectinload(LeaveRequest.company)
+            )
+            .where(LeaveRequest.id == leave_request.id)
+        )
+        leave_request_with_relations = result.scalar_one()
+        return leave_request_with_relations
 
     async def update(self, leave_request: LeaveRequest) -> LeaveRequest:
         """Update existing leave request."""
@@ -92,14 +108,15 @@ class LeaveRepository:
         sort_by: str = "created_at",
         sort_order: str = "desc",
         company_id: UUID = None,
-        user_id: UUID = None,
+        employee_id: UUID = None,
         user_role: str = None
     ) -> Tuple[List[LeaveRequest], int]:
         """List leave requests with pagination, filtering, and sorting."""
+        from src.employees.models import Employee
         query = select(LeaveRequest).options(
-            selectinload(LeaveRequest.employee),
-            selectinload(LeaveRequest.manager_approver),
-            selectinload(LeaveRequest.hr_approver)
+            selectinload(LeaveRequest.employee).selectinload(Employee.user),
+            selectinload(LeaveRequest.manager_approver).selectinload(Employee.user),
+            selectinload(LeaveRequest.hr_approver).selectinload(Employee.user)
         ).where(LeaveRequest.deleted_at.is_(None))
 
         # Apply company scoping
@@ -109,15 +126,15 @@ class LeaveRepository:
         # Apply role-based visibility
         if user_role == "employee":
             # Employees see only their own leaves
-            if user_id:
-                query = query.where(LeaveRequest.employee_id == user_id)
+            if employee_id:
+                query = query.where(LeaveRequest.employee_id == employee_id)
         elif user_role == "manager":
             # Managers see leaves assigned to them for approval
-            if user_id:
+            if employee_id:
                 query = query.where(
                     or_(
-                        LeaveRequest.employee_id == user_id,  # Own leaves
-                        LeaveRequest.manager_approver_id == user_id  # Assigned for approval
+                        LeaveRequest.employee_id == employee_id,  # Own leaves
+                        LeaveRequest.manager_approver_id == employee_id  # Assigned for approval
                     )
                 )
         elif user_role in ["hr", "ceo"]:
@@ -142,16 +159,16 @@ class LeaveRepository:
             if filters.get("employee_id"):
                 query = query.where(LeaveRequest.employee_id == filters["employee_id"])
 
-            if filters.get("pending_for_me") and user_id:
+            if filters.get("pending_for_me") and employee_id:
                 # Show only requests awaiting current user's approval
                 if user_role == "manager":
                     query = query.where(
-                        LeaveRequest.manager_approver_id == user_id,
+                        LeaveRequest.manager_approver_id == employee_id,
                         LeaveRequest.manager_status == "PENDING_MANAGER"
                     )
                 elif user_role == "hr":
                     query = query.where(
-                        LeaveRequest.hr_approver_id == user_id,
+                        LeaveRequest.hr_approver_id == employee_id,
                         LeaveRequest.manager_status == "APPROVED_MANAGER",
                         LeaveRequest.hr_status == "PENDING_HR"
                     )

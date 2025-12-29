@@ -159,6 +159,7 @@ class UserDetails(BaseModel):
     first_name: Optional[str] = Field(None, description="User first name")
     last_name: Optional[str] = Field(None, description="User last name")
     is_active: bool = Field(..., description="Login eligibility")
+    employee_id: Optional[UUID] = Field(None, description="Employee ID if user has an employee record in the company")
     created_at: datetime = Field(..., description="Account creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 

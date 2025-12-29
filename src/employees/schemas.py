@@ -25,6 +25,7 @@ class EmployeeListQuery(BaseModel):
     search: Optional[str] = Field(None, description="Search by user name or email (case-insensitive partial match)")
     department: Optional[str] = Field(None, description="Filter by department (exact match): FRONTEND, BACKEND, FULLSTACK, QA, HR, DEVOPS, UIUX, PRODUCT, MARKETING, DATA, SUPPORT")
     employment_status: Optional[str] = Field(None, description="Filter by employment status (exact match): TRAINEE, PROBATION, CONFIRMED, NOTICE_PERIOD, ACTIVE, ON_HOLD, TERMINATED, RESIGNED")
+    role_code: Optional[str] = Field(None, description="Filter by role code: 'superadmin', 'ceo', 'hr', 'manager', 'employee'. If not provided, returns all employees.")
     sort_by: str = Field("created_at", description="Sort field: created_at, updated_at, joining_date, job_title, department, employment_status")
     sort_order: str = Field("desc", description="Sort order: asc or desc")
 
@@ -172,6 +173,10 @@ class EmployeeDetail(BaseModel):
     updated_at: datetime = Field(..., description="Last update timestamp")
     created_by: Optional[UUID] = Field(None, description="User ID who created the employee")
     updated_by: Optional[UUID] = Field(None, description="User ID who last updated the employee")
+    
+    # ETag metadata (set by service, used by router for headers)
+    etag: Optional[str] = Field(None, exclude=True, description="ETag for cache validation")
+    last_modified: Optional[datetime] = Field(None, exclude=True, description="Last modified timestamp")
 
     model_config = ConfigDict(from_attributes=True)
 

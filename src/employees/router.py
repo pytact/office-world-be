@@ -62,7 +62,8 @@ async def list_employees(
     """List employees with pagination, filtering, search, and sorting.
     
     Based on F5_api_spec.md Section 5.1 - GET /api/v1/company/employees.
-    Authorization: CEO, HR, Manager (Employee role returns 403, SuperAdmin returns 403).
+    Authorization: CEO, HR, Manager, Employee (all company employees can view list).
+    SuperAdmin returns 403.
     """
     request_id = generate_request_id()
     user, company_id, role = user_company_role
@@ -99,7 +100,8 @@ async def get_employee(
     """Get employee details with role-based field visibility and ETag support.
     
     Based on F5_api_spec.md Section 5.3 - GET /api/v1/company/employees/{employee_id}.
-    Authorization: CEO, HR, Manager (Employee role returns 403, SuperAdmin returns 403).
+    Authorization: CEO, HR, Manager, Employee (all company employees can view details).
+    SuperAdmin returns 403.
     """
     request_id = generate_request_id()
     user, company_id, role = user_company_role
@@ -123,10 +125,10 @@ async def get_employee(
     )
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id
-    if hasattr(result, '_etag') and result._etag:
-        json_response.headers["ETag"] = result._etag
-    if hasattr(result, '_last_modified') and result._last_modified:
-        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    if hasattr(result, 'etag') and result.etag:
+        json_response.headers["ETag"] = result.etag
+    if hasattr(result, 'last_modified') and result.last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result.last_modified)
     return json_response
 
 
@@ -165,10 +167,10 @@ async def update_employee(
     )
     json_response = JSONResponse(content=response_data.model_dump(mode='json'))
     json_response.headers["X-Request-ID"] = request_id
-    if hasattr(result, '_etag') and result._etag:
-        json_response.headers["ETag"] = result._etag
-    if hasattr(result, '_last_modified') and result._last_modified:
-        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    if hasattr(result, 'etag') and result.etag:
+        json_response.headers["ETag"] = result.etag
+    if hasattr(result, 'last_modified') and result.last_modified:
+        json_response.headers["Last-Modified"] = format_last_modified(result.last_modified)
     return json_response
 
 

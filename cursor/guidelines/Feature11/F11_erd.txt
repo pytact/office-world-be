@@ -1,0 +1,30 @@
+================================================================================
+ASCII ER DIAGRAM - F-011 Audit Logging & Activity History
+================================================================================
+
+Canvas Mode - Crow's Foot Notation (PK and FK fields only)
+
++------------------+             +----------------------+             +------------------+
+|    companies     |   1     M   |    audit_logs        |  0..1    M    |      users       |
++------------------+             +----------------------+             +------------------+
+| id (PK)          |<----------->| id (PK)              |<----------->| id (PK)          |
+|                  |             | company_id (FK)      |              |                  |
+|                  |             | actor_id (FK)        |              |                  |
++------------------+             +----------------------+             +------------------+
+
+Relationship Details:
+- companies (1) → audit_logs (M): One company has many audit logs
+  * FK: audit_logs.company_id → companies.id
+  * Cardinality: 1 to Many (required - company_id is NOT NULL)
+  
+- users (0..1) → audit_logs (M): A user can be actor in zero or more audit logs
+  * FK: audit_logs.actor_id → users.id
+  * Cardinality: Zero or One to Many (optional - actor_id is NULLABLE for SYSTEM actions)
+
+Notes:
+- audit_logs.company_id: NOT NULL (mandatory - all audit logs belong to a company)
+- audit_logs.actor_id: NULLABLE (null for SYSTEM-generated actions)
+- audit_logs table is append-only and immutable (no updates or deletes)
+
+================================================================================
+

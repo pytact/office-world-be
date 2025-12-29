@@ -1,0 +1,74 @@
+================================================================================
+                    ENTITY RELATIONSHIP DIAGRAM (ERD)
+                    Feature: F-010 — Attendance Management
+                    Project: officeWorld
+================================================================================
+
+RELATIONSHIP CARDINALITY:
+- Company 1..* Attendance (One Company has many Attendance records)
+- Employee 1..* Attendance (One Employee has many Attendance records)
+- Attendance 1..* AttendanceLog (One Attendance has many AttendanceLog entries)
+- Employee 1..* AttendanceLog (One Employee has many AttendanceLog entries)
+
+================================================================================
+
+                    +----------------------+
+                    |      Companies       |
+                    +----------------------+
+                    | id (PK)              |
+                    +----------------------+
+                            |
+                            | 1
+                            |
+                            |
+                            | *
+                            |
+                            |
+                            v
+                    +----------------------+
+                    |     Attendance       |
+                    +----------------------+
+                    | id (PK)              |
+                    | company_id (FK)      |
+                    | employee_id (FK)     |
+                    +----------------------+
+                            |
+                            | 1
+                            |
+                            |
+                            | *
+                            |
+                            |
+                            v
+                    +----------------------+
+                    |   AttendanceLog      |
+                    +----------------------+
+                    | id (PK)              |
+                    | attendance_id (FK)   |
+                    | employee_id (FK)     |
+                    +----------------------+
+                            ^
+                            |
+                            | *
+                            |
+                            |
+                            | 1
+                            |
+                    +----------------------+
+                    |      Employees       |
+                    +----------------------+
+                    | id (PK)              |
+                    +----------------------+
+
+================================================================================
+
+NOTES:
+- Attendance table includes foreign keys to Company (from F-004) and Employee (from F-005)
+- AttendanceLog table includes foreign keys to Attendance and Employee
+- Only Primary Key (id) and Foreign Key fields are shown per db_instruction.md rules
+- Business fields (attendance_date, check_in_time, check_out_time, status, worked_time, is_auto_check_out) are excluded
+- Audit fields (created_at, updated_at, created_by, updated_by, deleted_at, deleted_by) are excluded
+- Relationship: Exactly one Attendance per employee per day (enforced at application level)
+
+================================================================================
+

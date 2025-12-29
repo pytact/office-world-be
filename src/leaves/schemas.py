@@ -2,7 +2,7 @@ from uuid import UUID
 from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator, ValidationInfo
 from enum import Enum
 
 
@@ -51,13 +51,6 @@ class LeaveCreate(BaseModel):
     manager_approver_id: UUID = Field(..., description="Manager approver ID")
     hr_approver_id: UUID = Field(..., description="HR approver ID")
 
-    @field_validator('end_date')
-    @classmethod
-    def validate_date_range(cls, v: date, values):
-        if 'start_date' in values and v < values['start_date']:
-            raise ValueError('end_date must be greater than or equal to start_date')
-        return v
-
     @field_validator('start_date')
     @classmethod
     def validate_start_date(cls, v: date):
@@ -65,6 +58,12 @@ class LeaveCreate(BaseModel):
         if v < dt_date.today():
             raise ValueError('start_date must be today or in the future')
         return v
+
+    @model_validator(mode='after')
+    def validate_date_range(self):
+        if self.end_date < self.start_date:
+            raise ValueError('end_date must be greater than or equal to start_date')
+        return self
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -104,12 +103,11 @@ class LeaveActionRequest(BaseModel):
     action: ActionType = Field(..., description="Action to perform")
     rejection_reason: Optional[str] = Field(None, min_length=10, max_length=500, description="Reason for rejection (required if action is 'reject')")
 
-    @field_validator('rejection_reason')
-    @classmethod
-    def validate_rejection_reason(cls, v: Optional[str], values):
-        if 'action' in values and values['action'] == ActionType.REJECT and not v:
+    @model_validator(mode='after')
+    def validate_rejection_reason(self):
+        if self.action == ActionType.REJECT and not self.rejection_reason:
             raise ValueError('rejection_reason is mandatory when action is "reject"')
-        return v
+        return self
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -128,6 +126,7 @@ class LeaveSummary(BaseModel):
     manager_status: ManagerStatus
     hr_status: HrStatus
     created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -8,8 +8,10 @@ import logging
 from uuid import UUID
 from typing import Optional
 from fastapi import APIRouter, Depends, status, Header, Response, Request
+from fastapi.responses import Response as FastAPIResponse, JSONResponse
 from src.schemas import StandardResponse
 from src.pagination import PagedCollection
+from src.users.utils import generate_request_id
 from src.notifications.schemas import (
     NotificationListQuery,
     NotificationRead,
@@ -51,11 +53,15 @@ async def list_notifications(
     query: NotificationListQuery = Depends(NotificationListQuery),
     api: NotificationApiDep = Depends(NotificationApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
-) -> StandardResponse[PagedCollection[NotificationRead]]:
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+    response: Response = None,
+) -> StandardResponse[PagedCollection[NotificationRead]] | FastAPIResponse:
     """List in-app notifications for the authenticated user with pagination, filtering, and sorting.
     
     Based on F3_api_spec.md Section 4.3.1 - GET /api/v1/notifications.
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
+    request_id = generate_request_id()
     user, company_id = user_company
     
     # Company-scoped: All notifications are scoped to the user's company (from JWT org_id)
@@ -73,16 +79,34 @@ async def list_notifications(
             next_page=None,
             prev_page=None,
         )
-        return StandardResponse(
+        response_data = StandardResponse(
             data=empty_result,
             message=SUCCESS_NOTIFICATIONS_RETRIEVED,
         )
+        json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+        json_response.headers["X-Request-ID"] = request_id
+        return json_response
     
-    result = await api.list_notifications(user.id, company_id, query)
-    return StandardResponse(
+    result = await api.list_notifications(user.id, company_id, query, if_none_match=if_none_match)
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
+    
+    # Set ETag and Last-Modified headers from service result
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_NOTIFICATIONS_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        from src.notifications.utils import format_last_modified
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    return json_response
 
 
 @router.get(
@@ -96,12 +120,15 @@ async def get_notification(
     notification_id: UUID,
     api: NotificationApiDep = Depends(NotificationApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     response: Response = None,
-) -> StandardResponse[NotificationRead]:
+) -> StandardResponse[NotificationRead] | FastAPIResponse:
     """Retrieve a single notification by ID.
     
     Based on F3_api_spec.md Section 4.3.2 - GET /api/v1/notifications/{notification_id}.
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
+    request_id = generate_request_id()
     user, company_id = user_company
     
     # Company-scoped: All notifications are scoped to the user's company
@@ -110,18 +137,26 @@ async def get_notification(
         from src.notifications.exceptions import NotificationNotFound
         raise NotificationNotFound(str(notification_id))
     
-    result = await api.get_notification_by_id(notification_id, user.id, company_id)
+    result = await api.get_notification_by_id(notification_id, user.id, company_id, if_none_match=if_none_match)
     
-    # Set ETag and Last-Modified headers (based on updated_at)
-    if hasattr(result, 'updated_at'):
-        from src.notifications.utils import generate_etag, format_last_modified
-        response.headers["ETag"] = generate_etag(result.updated_at)
-        response.headers["Last-Modified"] = format_last_modified(result.updated_at)
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
     
-    return StandardResponse(
+    # Set ETag and Last-Modified headers from service result
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_NOTIFICATION_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        from src.notifications.utils import format_last_modified
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    return json_response
 
 
 @router.patch(
@@ -141,10 +176,9 @@ async def mark_notification_as_read(
     """Mark a single notification as read.
     
     Based on F3_api_spec.md Section 4.3.3 - PATCH /api/v1/notifications/{notification_id}/read.
-    
-    Note: ETag validation is handled in service layer per error_prevention.md RULE 19.
-    For now, we'll implement basic If-Match validation.
+    ETag validation in service layer per error_prevention.md RULE 19.
     """
+    request_id = generate_request_id()
     user, company_id = user_company
     
     # Company-scoped: All notifications are scoped to the user's company
@@ -169,14 +203,18 @@ async def mark_notification_as_read(
     result = await api.mark_notification_as_read(notification_id, user.id, company_id)
     
     # Set new ETag after update
-    if hasattr(result, 'updated_at'):
-        from src.notifications.utils import generate_etag
-        response.headers["ETag"] = generate_etag(result.updated_at)
-    
-    return StandardResponse(
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_NOTIFICATION_MARKED_READ,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        from src.notifications.utils import format_last_modified
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    return json_response
 
 
 @router.patch(
@@ -190,11 +228,15 @@ async def bulk_mark_read(
     data: BulkMarkReadRequest,
     api: NotificationApiDep = Depends(NotificationApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    response: Response = None,
 ) -> StandardResponse[BulkMarkReadResponse]:
     """Bulk mark notifications as read or unread.
     
     Based on F3_api_spec.md Section 4.3.4 - PATCH /api/v1/notifications/read.
+    ETag validation in service layer per error_prevention.md RULE 19.
     """
+    request_id = generate_request_id()
     user, company_id = user_company
     
     # Company-scoped: All notifications are scoped to the user's company
@@ -206,18 +248,26 @@ async def bulk_mark_read(
             action=data.action,
             notification_ids=data.notification_ids,
         )
-        return StandardResponse(
+        response_data = StandardResponse(
             data=empty_result,
             message=SUCCESS_NOTIFICATIONS_MARKED_READ if data.action == ACTION_READ else SUCCESS_NOTIFICATIONS_MARKED_UNREAD,
         )
+        json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+        json_response.headers["X-Request-ID"] = request_id
+        return json_response
     
-    result = await api.bulk_mark_read(user.id, company_id, data)
+    result = await api.bulk_mark_read(user.id, company_id, data, if_match=if_match)
     
     message = SUCCESS_NOTIFICATIONS_MARKED_READ if data.action == ACTION_READ else SUCCESS_NOTIFICATIONS_MARKED_UNREAD
-    return StandardResponse(
+    response_data = StandardResponse(
         data=result,
         message=message,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    return json_response
 
 
 @router.get(
@@ -234,7 +284,9 @@ async def get_unread_count(
     """Get unread notification count for badge display.
     
     Based on F3_api_spec.md Section 4.3.5 - GET /api/v1/notifications/count.
+    Note: Count endpoints typically don't require ETag as they return aggregate data.
     """
+    request_id = generate_request_id()
     user, company_id = user_company
     
     # Company-scoped: All notifications are scoped to the user's company
@@ -242,13 +294,19 @@ async def get_unread_count(
         # SuperAdmin without company context - return zero count
         from src.notifications.schemas import UnreadCountResponse
         empty_result = UnreadCountResponse(unread_count=0)
-        return StandardResponse(
+        response_data = StandardResponse(
             data=empty_result,
             message=SUCCESS_UNREAD_COUNT_RETRIEVED,
         )
+        json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+        json_response.headers["X-Request-ID"] = request_id
+        return json_response
     
     result = await api.get_unread_count(user.id, company_id)
-    return StandardResponse(
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_UNREAD_COUNT_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    return json_response

@@ -150,12 +150,12 @@ class UserApiDep:
         self.service = UserService(session)
         self.session = session
 
-    async def list_platform_users(self, query):
-        """List all users across platform (SuperAdmin only)."""
-        return await self.service.list_platform_users(query)
+    async def list_platform_users(self, query, if_none_match: Optional[str] = None):
+        """List all users across platform (SuperAdmin only) with ETag support."""
+        return await self.service.list_platform_users(query, if_none_match=if_none_match)
 
-    async def list_company_users(self, company_id: Optional[UUID], query, include_sensitive: bool = True):
-        """List users in company with field visibility rules."""
+    async def list_company_users(self, company_id: Optional[UUID], query, include_sensitive: bool = True, if_none_match: Optional[str] = None):
+        """List users in company with field visibility rules and ETag support."""
         if company_id is None:
             # SuperAdmin accessing company users - convert CompanyUserListQuery to PlatformUserListQuery
             from src.users.schemas import PlatformUserListQuery
@@ -169,8 +169,8 @@ class UserApiDep:
                 sort_by=query.sort_by,
                 sort_order=query.sort_order,
             )
-            return await self.service.list_platform_users(platform_query)
-        return await self.service.list_company_users(company_id, query, include_sensitive=include_sensitive)
+            return await self.service.list_platform_users(platform_query, if_none_match=if_none_match)
+        return await self.service.list_company_users(company_id, query, include_sensitive=include_sensitive, if_none_match=if_none_match)
 
     async def get_user_by_id(self, user_id: UUID, include_sensitive: bool = True, if_none_match: Optional[str] = None):
         """Get user details by ID with field visibility rules."""

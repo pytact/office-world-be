@@ -6,8 +6,10 @@ No HTTP concerns, no database queries (uses repository).
 
 from uuid import UUID, uuid4
 from typing import Optional
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import status
+from fastapi.responses import Response as FastAPIResponse
 from src.users.models import User
 from src.permissions.models import UserRoleAssignment, Role
 from src.companies.models import Company
@@ -285,11 +287,12 @@ class UserService:
         return next_page, prev_page
 
     async def list_platform_users(
-        self, query: PlatformUserListQuery
-    ) -> PagedCollection[UserListItem]:
-        """List all users across platform with pagination and filtering.
+        self, query: PlatformUserListQuery, if_none_match: Optional[str] = None
+    ) -> PagedCollection[UserListItem] | FastAPIResponse:
+        """List all users across platform with pagination and filtering with ETag support.
         
         Based on F1A_api_spec.md Section 5.1 - GET /api/v1/users.
+        ETag logic in service layer per error_prevention.md RULE 19.
         """
         users, total = await self.repository.list_platform_users(
             page=query.page,
@@ -302,6 +305,21 @@ class UserService:
             sort_order=query.sort_order,
         )
         
+        # Generate ETag based on most recent user's updated_at (if any)
+        if users:
+            # Get the most recent updated_at from the result set
+            most_recent_updated_at = users[0].updated_at
+            etag = generate_etag(most_recent_updated_at)
+        else:
+            # Empty result set - use current timestamp
+            from datetime import timezone
+            etag = generate_etag(datetime.now(timezone.utc))
+        
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+        
         # Build list items (full field set for SuperAdmin)
         items = [self._build_user_list_item(user, include_sensitive=True) for user in users]
         
@@ -312,7 +330,7 @@ class UserService:
         next_page = f"/api/v1/users?page={query.page + 1}&page_size={query.page_size}" if query.page < total_pages else None
         prev_page = f"/api/v1/users?page={query.page - 1}&page_size={query.page_size}" if query.page > 1 else None
         
-        return PagedCollection[UserListItem](
+        result = PagedCollection[UserListItem](
             items=items,
             total=total,
             page=query.page,
@@ -321,18 +339,27 @@ class UserService:
             next_page=next_page,
             prev_page=prev_page,
         )
+        
+        # Attach ETag metadata for router
+        result._etag = etag
+        if users:
+            result._last_modified = users[0].updated_at
+        
+        return result
 
     async def list_company_users(
-        self, company_id: UUID, query: CompanyUserListQuery, include_sensitive: bool = True
-    ) -> PagedCollection[UserListItem]:
-        """List users in a specific company with pagination and filtering.
+        self, company_id: UUID, query: CompanyUserListQuery, include_sensitive: bool = True, if_none_match: Optional[str] = None
+    ) -> PagedCollection[UserListItem] | FastAPIResponse:
+        """List users in a specific company with pagination and filtering with ETag support.
         
         Based on F1A_api_spec.md Section 5.2 - GET /api/v1/company/users.
+        ETag logic in service layer per error_prevention.md RULE 19.
         
         Args:
             company_id: Company ID to filter users
             query: Query parameters
             include_sensitive: If False, excludes sensitive fields (Manager view)
+            if_none_match: Optional ETag for conditional request
         """
         users, total = await self.repository.list_company_users(
             company_id=company_id,
@@ -345,6 +372,21 @@ class UserService:
             sort_order=query.sort_order,
         )
         
+        # Generate ETag based on most recent user's updated_at (if any)
+        if users:
+            # Get the most recent updated_at from the result set
+            most_recent_updated_at = users[0].updated_at
+            etag = generate_etag(most_recent_updated_at)
+        else:
+            # Empty result set - use current timestamp
+            from datetime import timezone
+            etag = generate_etag(datetime.now(timezone.utc))
+        
+        # Check If-None-Match header for conditional request
+        if if_none_match and if_none_match == etag:
+            # Resource hasn't changed - return 304 Not Modified
+            return FastAPIResponse(status_code=status.HTTP_304_NOT_MODIFIED)
+        
         # Build list items with field visibility rules
         items = [self._build_user_list_item(user, include_sensitive=include_sensitive) for user in users]
         
@@ -356,7 +398,7 @@ class UserService:
         next_page = None
         prev_page = None
         
-        return PagedCollection[UserListItem](
+        result = PagedCollection[UserListItem](
             items=items,
             total=total,
             page=query.page,
@@ -365,6 +407,13 @@ class UserService:
             next_page=next_page,
             prev_page=prev_page,
         )
+        
+        # Attach ETag metadata for router
+        result._etag = etag
+        if users:
+            result._last_modified = users[0].updated_at
+        
+        return result
 
     async def get_user_by_id(
         self, user_id: UUID, include_sensitive: bool = True, if_none_match: Optional[str] = None

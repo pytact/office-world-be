@@ -126,15 +126,14 @@ that may optionally belong to projects, without inheriting project visibility.
 - Tasks support multiple assignees via TaskAssignment junction table
 - Each assignment has a permission level: VIEWER or EDITOR
 - VIEWER: Can view task only (read-only access)
-- EDITOR: Can edit task name and description only
-- Editors cannot: add/remove assignees, change task status, remove themselves, delete task
+- EDITOR: Can edit task name, description, and change task status
+- Editors cannot: add/remove assignees, remove themselves, delete task
 - UNIQUE constraint prevents duplicate assignments (same employee assigned twice to same task)
 
 **Task Status Lifecycle:**
 - Status values: TODO, IN_PROGRESS, HALT, REVIEW, DONE, CANCELLED
-- Owner can move task to any status at any time
+- Owner and Editor can move task to any status at any time
 - DONE and CANCELLED are terminal states (task becomes read-only)
-- Only task owner can change task status
 
 **Project Integration:**
 - Tasks can optionally belong to a project (project_id nullable)
@@ -158,7 +157,7 @@ that may optionally belong to projects, without inheriting project visibility.
 - Task owner is set to authenticated user (immutable)
 - Initial task status must be TODO
 - Task assignments are created via TaskAssignment records
-- Task status changes update status field (owner only)
+- Task status changes update status field (owner or editor)
 - Task deletion sets is_deleted = true and cascades to task assignments
 - Company deletion cascades to all company tasks and assignments
 
@@ -377,7 +376,7 @@ permissions and visibility are task-based.
 - **Business Rules (Application Level):**
   - `owner_id` is immutable (cannot be changed after creation)
   - Initial task status must be TODO
-  - Only task owner can change task status
+  - Owner or Editor can change task status
   - Tasks in terminal states (DONE, CANCELLED) are read-only
   - Deleted tasks (is_deleted = true) are excluded from queries
 

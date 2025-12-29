@@ -110,11 +110,19 @@ class EmployeeService:
         """Check if role has permission for action.
         
         Actions: list, create, get, update, delete
+        
+        Permissions:
+        - list: CEO, HR, Manager, Employee (all company employees can view list)
+        - create: CEO, HR only
+        - get: CEO, HR, Manager, Employee (all company employees can view details)
+        - update: CEO, HR only
+        - delete: CEO, HR only
         """
         if role == ROLE_SUPERADMIN:
             raise SuperAdminNoAccess()
         
-        if role == ROLE_EMPLOYEE:
+        # Allow employees for list and get actions
+        if role == ROLE_EMPLOYEE and action not in ["list", "get"]:
             raise InsufficientPermissions()
         
         if action == "create" and role not in [ROLE_CEO, ROLE_HR]:
@@ -179,8 +187,22 @@ class EmployeeService:
         self._validate_sort_field(query.sort_by)
         self._validate_sort_order(query.sort_order)
         
-        # For Manager role, exclude CEO and HR employees
-        exclude_ceo_hr = role == ROLE_MANAGER
+        # Validate role_code if provided
+        if query.role_code is not None:
+            from src.permissions.constants import VALID_ROLE_CODES
+            if query.role_code.lower() not in VALID_ROLE_CODES:
+                from src.exceptions import ValidationError
+                raise ValidationError(
+                    message=f"Invalid role_code: {query.role_code}. Valid values: {', '.join(VALID_ROLE_CODES)}",
+                    error_code="VALIDATION_FAILED",
+                    details=[{"field": "role_code", "issue": f"Invalid role_code '{query.role_code}'. Valid values: {', '.join(VALID_ROLE_CODES)}"}],
+                )
+        
+        # For Manager and Employee roles, exclude CEO and HR employees
+        # BUT: If filtering by role_code=hr or role_code=ceo, don't exclude them (user specifically wants them)
+        exclude_ceo_hr = role in [ROLE_MANAGER, ROLE_EMPLOYEE] and (
+            query.role_code is None or query.role_code.lower() not in ["hr", "ceo"]
+        )
         
         # Get employees from repository
         items, total = await self.repository.list_with_pagination(
@@ -191,6 +213,7 @@ class EmployeeService:
             department=query.department,
             employment_status=query.employment_status,
             exclude_ceo_hr=exclude_ceo_hr,
+            role_code=query.role_code,  # Pass role_code filter from query
             sort_by=query.sort_by,
             sort_order=query.sort_order,
         )
@@ -237,6 +260,8 @@ class EmployeeService:
                 next_params.append(f"department={query.department}")
             if query.employment_status is not None:
                 next_params.append(f"employment_status={query.employment_status}")
+            if query.role_code is not None:
+                next_params.append(f"role_code={query.role_code}")
             if query.sort_by != "created_at":
                 next_params.append(f"sort_by={query.sort_by}")
             if query.sort_order != "desc":
@@ -255,6 +280,8 @@ class EmployeeService:
                 prev_params.append(f"department={query.department}")
             if query.employment_status is not None:
                 prev_params.append(f"employment_status={query.employment_status}")
+            if query.role_code is not None:
+                prev_params.append(f"role_code={query.role_code}")
             if query.sort_by != "created_at":
                 prev_params.append(f"sort_by={query.sort_by}")
             if query.sort_order != "desc":
@@ -351,8 +378,8 @@ class EmployeeService:
             updated_by=employee.updated_by,
         )
         # Attach ETag and Last-Modified for router
-        result._etag = etag
-        result._last_modified = employee.updated_at
+        result.etag = etag
+        result.last_modified = employee.updated_at
         return result
 
     async def create_employee(

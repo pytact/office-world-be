@@ -7,7 +7,8 @@ user scoping, company scoping, and StandardResponse format.
 import logging
 from uuid import UUID
 from typing import Optional
-from fastapi import APIRouter, Depends, Response, Request
+from fastapi import APIRouter, Depends, Response, Request, Header
+from fastapi.responses import Response as FastAPIResponse, JSONResponse
 from src.schemas import StandardResponse
 from src.pagination import PagedCollection
 from src.permissions.schemas import (
@@ -16,11 +17,13 @@ from src.permissions.schemas import (
     RoleListItem,
 )
 from src.permissions.dependencies import RoleApiDep, get_current_user_with_company
+from src.permissions.documentations.permissions_api_doc import PermissionApiDocs
 from src.permissions.constants import (
     SUCCESS_ROLES_RETRIEVED,
     SUCCESS_ROLE_RETRIEVED,
 )
 from src.users.models import User
+from src.users.utils import generate_request_id
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -35,53 +38,85 @@ router = APIRouter(
 @router.get(
     "",
     response_model=StandardResponse[PagedCollection[RoleListItem]],
-    summary="List roles",
-    description="List all roles with pagination, filtering, and sorting. Supports filtering by code and name, and sorting by created_at, updated_at, name, or code.",
+    summary=PermissionApiDocs.list["summary"],
+    description=PermissionApiDocs.list["description"],
 )
 async def list_roles(
     request: Request,
     query: RoleListQuery = Depends(RoleListQuery),
     api: RoleApiDep = Depends(RoleApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
-) -> StandardResponse[PagedCollection[RoleListItem]]:
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+    response: Response = None,
+) -> StandardResponse[PagedCollection[RoleListItem]] | FastAPIResponse:
     """List roles with pagination, filtering, and sorting.
     
     Based on standard pagination pattern.
+    ETag logic in service layer per error_prevention.md RULE 19.
     """
+    request_id = generate_request_id()
     user, company_id = user_company
     
-    result = await api.list_roles(query)
-    return StandardResponse(
+    result = await api.list_roles(query, if_none_match=if_none_match)
+    
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
+    
+    # Set ETag and Last-Modified headers from service result
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_ROLES_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        from src.permissions.utils import format_last_modified
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    return json_response
 
 
 @router.get(
     "/{role_id}",
     response_model=StandardResponse[RoleRead],
-    summary="Get role by ID",
-    description="Retrieve a single role by its unique identifier.",
+    summary=PermissionApiDocs.get["summary"],
+    description=PermissionApiDocs.get["description"],
 )
 async def get_role(
     request: Request,
     role_id: UUID,
     api: RoleApiDep = Depends(RoleApiDep),
     user_company: tuple[User, Optional[UUID]] = Depends(get_current_user_with_company),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     response: Response = None,
-) -> StandardResponse[RoleRead]:
-    """Retrieve a single role by ID."""
+) -> StandardResponse[RoleRead] | FastAPIResponse:
+    """Retrieve a single role by ID.
+    
+    ETag logic in service layer per error_prevention.md RULE 19.
+    """
+    request_id = generate_request_id()
     user, company_id = user_company
     
-    result = await api.get_role_by_id(role_id)
+    result = await api.get_role_by_id(role_id, if_none_match=if_none_match)
     
-    # Set ETag and Last-Modified headers (based on updated_at)
-    if hasattr(result, 'updated_at'):
-        from src.notifications.utils import generate_etag, format_last_modified
-        response.headers["ETag"] = generate_etag(result.updated_at)
-        response.headers["Last-Modified"] = format_last_modified(result.updated_at)
+    # If service returned 304 Not Modified, return it directly
+    if isinstance(result, FastAPIResponse):
+        result.headers["X-Request-ID"] = request_id
+        return result
     
-    return StandardResponse(
+    # Set ETag and Last-Modified headers from service result
+    response_data = StandardResponse(
         data=result,
         message=SUCCESS_ROLE_RETRIEVED,
     )
+    json_response = JSONResponse(content=response_data.model_dump(mode='json'))
+    json_response.headers["X-Request-ID"] = request_id
+    if hasattr(result, '_etag') and result._etag:
+        json_response.headers["ETag"] = result._etag
+    if hasattr(result, '_last_modified') and result._last_modified:
+        from src.permissions.utils import format_last_modified
+        json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
+    return json_response

@@ -282,7 +282,7 @@ class SalaryDetails(Base):
             name="chk_salary_details_payment_frequency",
         ),
         CheckConstraint(
-            "effective_from >= CURRENT_DATE",
+            "(effective_to IS NULL AND effective_from >= CURRENT_DATE) OR (effective_to IS NOT NULL)",
             name="chk_salary_details_effective_from",
         ),
         CheckConstraint(
