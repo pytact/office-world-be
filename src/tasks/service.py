@@ -74,7 +74,9 @@ from src.tasks.constants import (
     PERMISSION_OWNER,
     TERMINAL_STATES,
 )
-from src.exceptions import PreconditionRequiredError, PreconditionFailedError
+from src.exceptions import PreconditionRequiredError, PreconditionFailedError, BadRequestError
+import logging
+from src.audits.repository import AuditLogRepository
 
 
 class TaskService:
@@ -86,6 +88,7 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = TaskRepository(session)
+        self.audit_repository = AuditLogRepository(session)
 
     def _check_user_permission(
         self,
@@ -225,7 +228,6 @@ class TaskService:
             try:
                 project_id_uuid = UUID(query.project_id)
             except ValueError:
-                from src.exceptions import BadRequestError
                 raise BadRequestError(
                     message=f"Invalid project_id format: {query.project_id}",
                     error_code="VALIDATION_FAILED",
@@ -476,6 +478,8 @@ class TaskService:
         user_id: UUID,
         employee_id: Optional[UUID],
         role: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> TaskRead:
         """Create a new task.
         
@@ -529,7 +533,6 @@ class TaskService:
             for assignment_item in data.assignments:
                 # Cannot assign task to owner (owner already has full access)
                 if assignment_item.employee_id == owner_id:
-                    from src.exceptions import BadRequestError
                     raise BadRequestError(
                         message="Cannot assign task to the owner. The creator is always the owner.",
                         error_code="VALIDATION_FAILED",
@@ -556,6 +559,35 @@ class TaskService:
         )
         
         task = await self.repository.create(task)
+        
+        # Create audit log for task creation
+        try:
+            # Build new_values with task fields
+            new_values = {
+                "name": task.name,
+                "status": task.status,
+            }
+            if task.description:
+                new_values["description"] = task.description
+            if task.project_id:
+                new_values["project_id"] = str(task.project_id)
+            
+            await self.audit_repository.create(
+                company_id=company_id,
+                action_code="TASK_CREATED",
+                table_name="tasks",
+                record_id=task.id,
+                actor_id=user_id,
+                old_values=None,
+                new_values=new_values,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                description=f"Task '{task.name}' created",
+            )
+        except Exception as e:
+            # Audit logging is asynchronous and non-blocking
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create audit log for task creation: {e}")
         
         # Create assignments if provided
         if data.assignments:
@@ -694,6 +726,8 @@ class TaskService:
         employee_id: Optional[UUID],
         role: str,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> TaskRead:
         """Update task details (name, description, status, assignments).
         
@@ -786,6 +820,20 @@ class TaskService:
             if not can_manage_assignments:
                 raise InsufficientPermissionsAssignments()
         
+        # Build old_values and new_values for audit log (only changed fields)
+        old_values = {}
+        new_values = {}
+        
+        if data.name is not None and data.name != current_task.name:
+            old_values["name"] = current_task.name
+            new_values["name"] = data.name
+        if data.description is not None and data.description != current_task.description:
+            old_values["description"] = current_task.description
+            new_values["description"] = data.description
+        if data.status is not None and data.status != current_task.status:
+            old_values["status"] = current_task.status
+            new_values["status"] = data.status
+        
         # Update task fields
         if data.name is not None:
             current_task.name = data.name
@@ -797,6 +845,26 @@ class TaskService:
         current_task.updated_by = user_id
         
         updated_task = await self.repository.update(current_task)
+        
+        # Create audit log for task update (only if there were changes)
+        if old_values or new_values:
+            try:
+                await self.audit_repository.create(
+                    company_id=company_id,
+                    action_code="TASK_UPDATED",
+                    table_name="tasks",
+                    record_id=task_id,
+                    actor_id=user_id,
+                    old_values=old_values if old_values else None,
+                    new_values=new_values if new_values else None,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Task '{updated_task.name}' updated",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for task update: {e}")
         
         # Reload task with eager loading after update (refresh may clear relationships)
         updated_task = await self.repository.get_by_id(task_id, company_id)
@@ -811,7 +879,6 @@ class TaskService:
                 for add_item in data.assignments.add:
                     # Cannot assign task to owner (owner already has full access)
                     if add_item.employee_id == updated_task.owner_id:
-                        from src.exceptions import BadRequestError
                         raise BadRequestError(
                             message="Cannot assign task to the owner. The creator is always the owner.",
                             error_code="VALIDATION_FAILED",
@@ -1361,7 +1428,6 @@ class TaskService:
             for add_item in data.add:
                 # Cannot assign task to owner (owner already has full access)
                 if add_item.employee_id == current_task.owner_id:
-                    from src.exceptions import BadRequestError
                     raise BadRequestError(
                         message="Cannot assign task to the owner. The creator is always the owner.",
                         error_code="VALIDATION_FAILED",
@@ -1573,6 +1639,8 @@ class TaskService:
         employee_id: Optional[UUID],
         role: str,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> None:
         """Hard delete a task (permanent removal).
         
@@ -1672,6 +1740,35 @@ class TaskService:
                     )
                 except Exception as e:
                     print(f"[TASK SERVICE] Warning: Failed to send deletion notification to assignee: {str(e)}")
+        
+        # Create audit log for task deletion
+        try:
+            # Build old_values with task fields before deletion
+            old_values = {
+                "name": current_task.name,
+                "status": current_task.status,
+            }
+            if current_task.description:
+                old_values["description"] = current_task.description
+            if current_task.project_id:
+                old_values["project_id"] = str(current_task.project_id)
+            
+            await self.audit_repository.create(
+                company_id=company_id,
+                action_code="TASK_DELETED",
+                table_name="tasks",
+                record_id=task_id,
+                actor_id=user_id,
+                old_values=old_values,
+                new_values=None,  # No new values for deletion
+                ip_address=ip_address,
+                user_agent=user_agent,
+                description=f"Task '{current_task.name}' deleted",
+            )
+        except Exception as e:
+            # Audit logging is asynchronous and non-blocking
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create audit log for task deletion: {e}")
         
         # Hard delete task
         await self.repository.delete(current_task)

@@ -8,10 +8,11 @@ from src.database import get_session
 from src.leaves.service import LeaveService
 from src.leaves.schemas import LeaveCreate, LeaveListQuery, LeaveActionRequest, LeaveRead, LeavePaginatedResponse
 from src.auth.dependencies import oauth2_scheme
-from src.auth.utils import decode_token
+from src.auth.utils import decode_token, is_token_blacklisted
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
 from src.permissions.models import Role
+from src.employees.repository import EmployeeRepository
 from jose import JWTError
 
 
@@ -29,9 +30,6 @@ async def get_current_user_with_company(
     
     Based on F5_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
-    from src.auth.utils import is_token_blacklisted
-    from src.employees.repository import EmployeeRepository
-    
     # CRITICAL: Check if token is None before decoding
     if not token:
         raise InvalidCredentials()
@@ -157,7 +155,9 @@ class LeaveApiDep:
         employee_id: Optional[UUID],
         user_role: str,
         company_id: Optional[UUID],
-        if_match: Optional[str] = None
+        if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> LeaveRead:
         """Perform action (approve/reject/cancel) on leave request with ETag validation."""
         return await self.service.perform_leave_action(
@@ -167,6 +167,8 @@ class LeaveApiDep:
             employee_id=employee_id,
             user_role=user_role,
             company_id=company_id,
-            if_match=if_match
+            if_match=if_match,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
 

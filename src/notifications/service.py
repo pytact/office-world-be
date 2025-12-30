@@ -23,6 +23,7 @@ from src.notifications.exceptions import (
     InvalidSortField,
     InvalidSortOrder,
     InvalidAction,
+    PreconditionFailed,
 )
 from src.notifications.constants import (
     VALID_NOTIFICATION_TYPES,
@@ -222,8 +223,6 @@ class NotificationService:
         ETag validation in service layer per error_prevention.md RULE 19.
         For bulk operations, If-Match is optional but recommended for consistency.
         """
-        from src.notifications.exceptions import PreconditionFailed
-        
         # Validate action
         self._validate_action(request.action)
 

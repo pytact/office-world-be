@@ -9,6 +9,7 @@ from src.database import Base
 if TYPE_CHECKING:
     from src.permissions.models import UserRoleAssignment
     from src.employees.models import Employee
+    from src.audits.models import AuditLog
 else:
     # Import at runtime for foreign_keys reference
     from src.permissions.models import UserRoleAssignment
@@ -138,6 +139,11 @@ class User(Base):
         back_populates="user",
         foreign_keys="Employee.user_id",
         uselist=False,
+    )
+    audit_logs: Mapped[list["AuditLog"]] = relationship(
+        "AuditLog",
+        back_populates="actor",
+        foreign_keys="AuditLog.actor_id",
     )
 
 

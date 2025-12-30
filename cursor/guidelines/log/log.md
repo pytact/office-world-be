@@ -169,3 +169,14 @@ Each domain file **must explain how the feature works in practice**, including:
 ## Problem
 
 * Conflicting statements: read-only for all roles vs attendance visible to roles.
+
+**Issue Date:** 2025-12-29
+**Domain File:** F10_domain_model.md
+
+## Issue 6 - audit log should be introduce in initial phase.
+
+### Problem
+
+* If we introduce the audit log after completing all phases, it will require refactoring the entire codebase again to add audit log functionality. This would mean re-testing the complete project and re-checking for errors.
+
+The better option is to implement the audit log functionality incrementally with each phase, so there is no need for full re-testing and extensive bug fixing later, and we avoid separately adding logging code to all phases at the end.

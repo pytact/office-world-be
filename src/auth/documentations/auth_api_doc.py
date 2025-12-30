@@ -6,6 +6,11 @@ from typing import ClassVar
 class AuthApiDocs:
     """API documentation for Authentication endpoints."""
 
+    token: ClassVar[dict] = {
+        "summary": "OAuth2 token endpoint for Swagger UI",
+        "description": "OAuth2-compatible token endpoint for Swagger UI authorization. Accepts Form parameters (username/password) and returns OAuth2-compatible response (access_token, token_type). This endpoint enables the 'Authorize' button in Swagger UI. Users can authenticate via Swagger UI using this endpoint. MUST accept Form(...) parameters (not JSON) and MUST return OAuth2-compatible response format.",
+    }
+
     login: ClassVar[dict] = {
         "summary": "Authenticate user with email and password",
         "description": "Validates user credentials and returns JWT access token with role and organization context. Validates user account is active, not soft-deleted, and company is active (for non-SuperAdmin users).",

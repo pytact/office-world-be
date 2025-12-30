@@ -7,6 +7,7 @@ All methods filter by deleted_at IS NULL for soft-delete support.
 
 from uuid import UUID
 from typing import Optional
+from datetime import datetime, timezone
 from sqlalchemy import select, func, and_, or_, desc, asc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -234,7 +235,6 @@ class ProjectRepository:
         Pure database operation - no business logic.
         Cascade deletion to tasks is handled in service layer (application-level).
         """
-        from datetime import datetime, timezone
         
         project = await self.get_by_id(project_id)
         if not project:

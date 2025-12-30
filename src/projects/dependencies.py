@@ -9,7 +9,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database import get_session
 from src.auth.dependencies import oauth2_scheme
-from src.auth.utils import decode_token
+from src.auth.utils import decode_token, is_token_blacklisted
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
 from src.permissions.models import Role
@@ -36,8 +36,6 @@ async def get_current_user_with_company(
     
     Based on F7_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
-    from src.auth.utils import is_token_blacklisted
-    
     # CRITICAL: Check if token is None before decoding
     if not token:
         raise InvalidCredentials()
@@ -159,6 +157,8 @@ class ProjectApiDep:
         data: ProjectCreate,
         user_id: UUID,
         role: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         """Create a new project."""
         return await self.service.create_project(
@@ -166,6 +166,8 @@ class ProjectApiDep:
             data=data,
             user_id=user_id,
             role=role,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
 
     async def update_project(
@@ -176,6 +178,8 @@ class ProjectApiDep:
         user_id: UUID,
         role: str,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         """Update project name and/or status with ETag validation."""
         return await self.service.update_project(
@@ -185,6 +189,8 @@ class ProjectApiDep:
             user_id=user_id,
             role=role,
             if_match=if_match,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
 
     async def delete_project(

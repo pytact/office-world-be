@@ -1,5 +1,6 @@
 from uuid import UUID
 from datetime import datetime, date
+from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator, ValidationInfo
@@ -54,7 +55,6 @@ class LeaveCreate(BaseModel):
     @field_validator('start_date')
     @classmethod
     def validate_start_date(cls, v: date):
-        from datetime import date as dt_date
         if v < dt_date.today():
             raise ValueError('start_date must be today or in the future')
         return v

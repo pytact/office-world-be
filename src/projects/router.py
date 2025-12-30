@@ -31,6 +31,7 @@ from src.projects.constants import (
     SUCCESS_PROJECT_UPDATED,
     SUCCESS_PROJECT_DELETED,
 )
+from src.projects.exceptions import InsufficientPermissions
 from src.projects.utils import format_last_modified
 from src.users.models import User
 from src.users.utils import generate_request_id
@@ -74,7 +75,6 @@ async def list_projects(
     
     # Company ID is required for project endpoints
     if company_id is None:
-        from src.projects.exceptions import InsufficientPermissions
         raise InsufficientPermissions("Company context is required for project operations.")
     
     # Get employee_id for employee role visibility
@@ -140,11 +140,17 @@ async def create_project(
     request_id = generate_request_id(x_request_id)
     user, company_id, role = user_company_role
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     result = await api.create_project(
         company_id=company_id,
         data=data,
         user_id=user.id,
         role=role,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     response_data = StandardResponse(
@@ -188,7 +194,6 @@ async def get_project(
     
     # Company ID is required for project endpoints
     if company_id is None:
-        from src.projects.exceptions import InsufficientPermissions
         raise InsufficientPermissions("Company context is required for project operations.")
     
     # Handle empty strings for If-None-Match
@@ -258,6 +263,10 @@ async def update_project(
     # Handle empty strings for If-Match
     if_match_value = if_match if if_match and if_match.strip() else None
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     result = await api.update_project(
         project_id=project_id,
         company_id=company_id,
@@ -265,6 +274,8 @@ async def update_project(
         user_id=user.id,
         role=role,
         if_match=if_match_value,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     response_data = StandardResponse(

@@ -28,7 +28,14 @@ router = APIRouter(
 
 
 # OAuth2 Token Endpoint for Swagger UI
-@router.post("/token", status_code=status.HTTP_200_OK)
+# CRITICAL: This endpoint is required for Swagger UI OAuth2 authorization flow
+# Based on auth_setup.md RULE 4.1.1 and error_prevention.md RULE 3.1.1
+@router.post(
+    "/token",
+    status_code=status.HTTP_200_OK,
+    summary=AuthApiDocs.token["summary"],
+    description=AuthApiDocs.token["description"],
+)
 async def token(
     username: str = Form(...),  # OAuth2 uses 'username' but we treat it as email
     password: str = Form(...),
@@ -36,8 +43,14 @@ async def token(
 ):
     """OAuth2-compatible token endpoint for Swagger UI authorization.
     
-    Based on auth_setup.md RULE 4 and error_prevention.md RULE 3.
-    This endpoint accepts form data (username/password) and returns OAuth2-compatible response.
+    CRITICAL RULES (auth_setup.md + error_prevention.md):
+    - MUST accept Form(...) parameters (not JSON) - RULE 3.1.1, RULE 4.1.1
+    - MUST return OAuth2-compatible response (access_token, token_type) - RULE 3.1.1
+    - MUST handle errors in OAuth2 format (401 with WWW-Authenticate header) - RULE 3.1.1, RULE 7.1.1
+    - MUST catch all authentication exceptions - RULE 7.1.1
+    
+    This endpoint enables the "Authorize" button in Swagger UI.
+    Users can authenticate via Swagger UI using this endpoint.
     """
     from src.auth.exceptions import (
         InvalidCredentials,
@@ -47,17 +60,24 @@ async def token(
     )
     
     try:
+        # Convert OAuth2 'username' parameter to email (our system uses email)
         login_request = LoginRequest(email=username, password=password)
         result = await api.login(login_request)
-        # Return OAuth2-compatible response (just the access token)
+        
+        # CRITICAL: Return OAuth2-compatible response format
+        # Must return: {"access_token": "...", "token_type": "bearer"}
+        # This format is required for Swagger UI OAuth2 flow
         return {
             "access_token": result.access_token,
             "token_type": "bearer",
         }
     except (InvalidCredentials, AccountInactive, AccountDeleted, CompanyInactive):
-        # Return OAuth2-compatible error response
-        # Note: OAuth2 token endpoints require specific error format per error_prevention.md RULE 3
-        # All authentication-related exceptions return 401 with WWW-Authenticate header
+        # CRITICAL: Return OAuth2-compatible error response
+        # OAuth2 spec requires:
+        # - 401 status code for authentication errors
+        # - WWW-Authenticate header with "Bearer" scheme
+        # - Generic error message (don't reveal specific error for security)
+        # Based on error_prevention.md RULE 3.1.1 and RULE 7.1.1
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

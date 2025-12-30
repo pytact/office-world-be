@@ -68,12 +68,11 @@ async def list_companies(
     response: Response = None,
 ) -> StandardResponse[CompanyPaginatedResponse]:
     """List all companies with pagination, search, filtering, and sorting.
-    
+
     Based on F4_api_spec.md Section 4.4.1 - GET /api/v1/companies.
     Authorization: SuperAdmin only.
     """
     # Generate X-Request-ID
-    from src.users.utils import generate_request_id
     request_id = generate_request_id()
     if response:
         response.headers["X-Request-ID"] = request_id
@@ -100,13 +99,12 @@ async def get_company(
     response: Response = None,
 ) -> StandardResponse[CompanyDetail] | FastAPIResponse:
     """Get company details with user count.
-    
+
     Based on F4_api_spec.md Section 4.4.3 - GET /api/v1/companies/{company_id}.
     Authorization: SuperAdmin only.
     ETag logic in service layer per error_prevention.md RULE 19.
     """
     # Generate X-Request-ID
-    from src.users.utils import generate_request_id
     request_id = generate_request_id()
     if response:
         response.headers["X-Request-ID"] = request_id
@@ -145,17 +143,25 @@ async def create_company(
     response: Response = None,
 ) -> StandardResponse[CompanyDetail]:
     """Create a new company.
-    
+
     Based on F4_api_spec.md Section 4.4.2 - POST /api/v1/companies.
     Authorization: SuperAdmin only.
     """
     # Generate X-Request-ID
-    from src.users.utils import generate_request_id
     request_id = generate_request_id()
     if response:
         response.headers["X-Request-ID"] = request_id
     
-    result = await api.create_company(data, created_by=current_user.id)
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    result = await api.create_company(
+        data,
+        created_by=current_user.id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
     
     # Set ETag and Last-Modified headers from service result
     if hasattr(result, '_etag'):
@@ -185,20 +191,28 @@ async def update_company(
     response: Response = None,
 ) -> StandardResponse[CompanyDetail]:
     """Update company information or activate/deactivate company.
-    
+
     Based on F4_api_spec.md Section 4.4.4 - PATCH /api/v1/companies/{company_id}.
     Authorization: SuperAdmin only.
     ETag validation in service layer per error_prevention.md RULE 19.
     """
     # Generate X-Request-ID
-    from src.users.utils import generate_request_id
     request_id = generate_request_id()
     if response:
         response.headers["X-Request-ID"] = request_id
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     # Pass header to service (service handles validation)
     result = await api.update_company(
-        company_id, update_data, if_match=if_match, updated_by=current_user.id
+        company_id,
+        update_data,
+        if_match=if_match,
+        updated_by=current_user.id,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     # Set ETag header from service result
@@ -226,13 +240,12 @@ async def delete_company(
     response: Response = None,
 ) -> Response:
     """Hard delete a company.
-    
+
     Based on F4_api_spec.md Section 4.4.5 - DELETE /api/v1/companies/{company_id}.
     Authorization: SuperAdmin only.
     ETag validation in service layer per error_prevention.md RULE 19.
     """
     # Generate X-Request-ID
-    from src.users.utils import generate_request_id
     request_id = generate_request_id()
     if response:
         response.headers["X-Request-ID"] = request_id
@@ -320,9 +333,18 @@ async def update_company_profile(
     request_id = generate_request_id(x_request_id)
     user, company_id = user_company
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     # Pass header to service (service handles validation)
     result = await api.update_company_profile(
-        company_id, update_data, if_match=if_match, updated_by=user.id
+        company_id,
+        update_data,
+        if_match=if_match,
+        updated_by=user.id,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     # Set ETag header from service result

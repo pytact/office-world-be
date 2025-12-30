@@ -39,6 +39,8 @@ from src.companies.constants import (
 )
 from src.companies.utils import generate_etag, format_last_modified
 from src.config import settings
+from src.audits.repository import AuditLogRepository
+import logging
 
 
 class CompanyService:
@@ -50,6 +52,7 @@ class CompanyService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = CompanyRepository(session)
+        self.audit_repository = AuditLogRepository(session)
 
     def _validate_sort_field(self, sort_by: str) -> None:
         """Validate sort field."""
@@ -200,7 +203,11 @@ class CompanyService:
         return result
 
     async def create_company(
-        self, data: CompanyCreate, created_by: Optional[UUID] = None
+        self,
+        data: CompanyCreate,
+        created_by: Optional[UUID] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> CompanyDetail:
         """Create a new company.
         
@@ -228,6 +235,51 @@ class CompanyService:
             logo_url=data.logo_url,
             created_by=created_by,
         )
+
+        # Create audit log for company creation
+        # Note: company_id is the newly created company's ID
+        try:
+            # Build new_values with only non-None fields (partial snapshot)
+            new_values = {}
+            if data.description is not None:
+                new_values["description"] = data.description
+            if data.address is not None:
+                new_values["address"] = data.address
+            if data.city is not None:
+                new_values["city"] = data.city
+            if data.state is not None:
+                new_values["state"] = data.state
+            if data.country is not None:
+                new_values["country"] = data.country
+            if data.postal_code is not None:
+                new_values["postal_code"] = data.postal_code
+            if data.website is not None:
+                new_values["website"] = data.website
+            if data.logo_url is not None:
+                new_values["logo_url"] = data.logo_url
+            
+            # Always include required fields
+            new_values["name"] = data.name
+            new_values["slug"] = data.slug
+            new_values["is_active"] = True  # Default value
+            
+            await self.audit_repository.create(
+                company_id=company.id,
+                action_code="COMPANY_CREATED",
+                table_name="companies",
+                record_id=company.id,
+                actor_id=created_by,
+                old_values=None,  # No old values for creation
+                new_values=new_values if new_values else None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                description=f"Company '{data.name}' created",
+            )
+        except Exception as e:
+            # Audit logging is asynchronous and non-blocking
+            # Log error but don't fail the operation
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create audit log for company creation: {e}")
 
         # Get user count
         user_count = await self.repository.get_user_count(company.id)
@@ -263,6 +315,8 @@ class CompanyService:
         data: CompanyUpdate,
         if_match: Optional[str] = None,
         updated_by: Optional[UUID] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> CompanyDetail:
         """Update a company with ETag validation.
         
@@ -291,6 +345,38 @@ class CompanyService:
         # Name and slug cannot be updated per F4 spec
         # Note: CompanyUpdate schema doesn't include name/slug, but we check anyway for safety
 
+        # Build old_values and new_values for audit log (only changed fields)
+        old_values = {}
+        new_values = {}
+        
+        if data.description is not None and data.description != company.description:
+            old_values["description"] = company.description
+            new_values["description"] = data.description
+        if data.address is not None and data.address != company.address:
+            old_values["address"] = company.address
+            new_values["address"] = data.address
+        if data.city is not None and data.city != company.city:
+            old_values["city"] = company.city
+            new_values["city"] = data.city
+        if data.state is not None and data.state != company.state:
+            old_values["state"] = company.state
+            new_values["state"] = data.state
+        if data.country is not None and data.country != company.country:
+            old_values["country"] = company.country
+            new_values["country"] = data.country
+        if data.postal_code is not None and data.postal_code != company.postal_code:
+            old_values["postal_code"] = company.postal_code
+            new_values["postal_code"] = data.postal_code
+        if data.website is not None and data.website != company.website:
+            old_values["website"] = company.website
+            new_values["website"] = data.website
+        if data.logo_url is not None and data.logo_url != company.logo_url:
+            old_values["logo_url"] = company.logo_url
+            new_values["logo_url"] = data.logo_url
+        if data.is_active is not None and data.is_active != company.is_active:
+            old_values["is_active"] = company.is_active
+            new_values["is_active"] = data.is_active
+
         # Update company (business logic)
         updated_company = await self.repository.update(
             company_id=company_id,
@@ -308,6 +394,27 @@ class CompanyService:
 
         if not updated_company:
             raise CompanyNotFound(str(company_id))
+
+        # Create audit log for company update (only if there were changes)
+        if old_values or new_values:
+            try:
+                await self.audit_repository.create(
+                    company_id=company_id,
+                    action_code="COMPANY_UPDATED",
+                    table_name="companies",
+                    record_id=company_id,
+                    actor_id=updated_by,
+                    old_values=old_values if old_values else None,
+                    new_values=new_values if new_values else None,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Company '{company.name}' updated",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                # Log error but don't fail the operation
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for company update: {e}")
 
         # Get user count
         user_count = await self.repository.get_user_count(company_id)
@@ -412,6 +519,8 @@ class CompanyService:
         data: CompanyProfileUpdate,
         if_match: Optional[str] = None,
         updated_by: Optional[UUID] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> CompanyProfile:
         """Update company profile fields (CEO/HR only) with ETag validation.
         
@@ -441,6 +550,35 @@ class CompanyService:
             # Raise exception in service (business logic validation)
             raise PreconditionFailed()
 
+        # Build old_values and new_values for audit log (only changed fields)
+        old_values = {}
+        new_values = {}
+        
+        if data.description is not None and data.description != company.description:
+            old_values["description"] = company.description
+            new_values["description"] = data.description
+        if data.address is not None and data.address != company.address:
+            old_values["address"] = company.address
+            new_values["address"] = data.address
+        if data.city is not None and data.city != company.city:
+            old_values["city"] = company.city
+            new_values["city"] = data.city
+        if data.state is not None and data.state != company.state:
+            old_values["state"] = company.state
+            new_values["state"] = data.state
+        if data.country is not None and data.country != company.country:
+            old_values["country"] = company.country
+            new_values["country"] = data.country
+        if data.postal_code is not None and data.postal_code != company.postal_code:
+            old_values["postal_code"] = company.postal_code
+            new_values["postal_code"] = data.postal_code
+        if data.website is not None and data.website != company.website:
+            old_values["website"] = company.website
+            new_values["website"] = data.website
+        if data.logo_url is not None and data.logo_url != company.logo_url:
+            old_values["logo_url"] = company.logo_url
+            new_values["logo_url"] = data.logo_url
+
         # Update company profile fields only (business logic)
         # Note: Only profile fields are updated, governance fields are ignored
         updated_company = await self.repository.update(
@@ -459,6 +597,27 @@ class CompanyService:
 
         if not updated_company:
             raise CompanyNotFound(str(company_id))
+
+        # Create audit log for company profile update (only if there were changes)
+        if old_values or new_values:
+            try:
+                await self.audit_repository.create(
+                    company_id=company_id,
+                    action_code="COMPANY_UPDATED",
+                    table_name="companies",
+                    record_id=company_id,
+                    actor_id=updated_by,
+                    old_values=old_values if old_values else None,
+                    new_values=new_values if new_values else None,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Company profile '{company.name}' updated",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                # Log error but don't fail the operation
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for company profile update: {e}")
 
         # Return company profile (excludes governance fields)
         result = CompanyProfile(

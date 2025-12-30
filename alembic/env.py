@@ -22,8 +22,9 @@ from src.tasks.models import Task, TaskAssignment  # F-008 Task Management
 from src.leaves.models import LeaveRequest  # F-009 Leave Management
 from src.notifications.models import Notification  # F-003 Notifications
 from src.attendance.models import Attendance, AttendanceLog  # F-010 Attendance Management
+from src.audits.models import AuditLog  # F-011 Audit Logging & Activity History
+from src.reports.models import Export  # F-012 Part B: Export Functionality for Reports & Analytics
 # TODO: Import other models when they are implemented:
-# from src.audits.models import Audit
 # from src.dashboards.models import Dashboard
 
 # this is the Alembic Config object, which provides

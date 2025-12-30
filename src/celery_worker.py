@@ -3,13 +3,27 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date, timezone
+from io import BytesIO
+import traceback
+import re
 from src.celery_app import celery_app
 from src.config import settings
 from src.database import Base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
+
+# ReportLab imports for PDF generation
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+except ImportError:
+    # ReportLab not available, will be handled in PDF generation functions
+    pass
 
 # Import ALL models to ensure foreign key relationships are resolved in Base.metadata
 # This is CRITICAL for SQLAlchemy to resolve foreign keys at runtime in Celery workers
@@ -23,6 +37,9 @@ from src.tasks.models import Task
 from src.projects.models import Project
 from src.salaries.models import BankInfo, SalaryDetails, SalaryPayment, SalaryHistory
 from src.notifications.models import Notification
+from src.reports.models import Export
+from src.attendance.models import Attendance, AttendanceLog
+from src.audits.models import AuditLog
 
 # Force metadata initialization by accessing model tables
 # This ensures all imported models are registered with Base.metadata
@@ -40,6 +57,10 @@ _ = SalaryDetails.__table__
 _ = SalaryPayment.__table__
 _ = SalaryHistory.__table__
 _ = Notification.__table__
+_ = Export.__table__
+_ = Attendance.__table__
+_ = AttendanceLog.__table__
+_ = AuditLog.__table__
 
 from src.notifications.constants import (
     CHANNEL_EMAIL,
@@ -196,7 +217,6 @@ def create_notification_records(
             
     except Exception as e:
         print(f"[NOTIFICATION ERROR] Failed to create notification records: {str(e)}")
-        import traceback
         traceback.print_exc()
         # Don't raise - we don't want notification creation failure to break the task
 
@@ -248,7 +268,6 @@ def send_email_smtp(
         return False
     except Exception as e:
         print(f"[EMAIL ERROR] Unexpected error sending email to {to_email}: {str(e)}")
-        import traceback
         traceback.print_exc()
         return False
 
@@ -320,7 +339,6 @@ This invitation will expire on {expiry_date}.
         return result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_invitation_email: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -372,7 +390,6 @@ The Office World Team
         return result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_welcome_email: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -439,7 +456,6 @@ If you did not request this password reset, please ignore this email and your pa
         return result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_password_reset_email: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -579,7 +595,6 @@ The {company_name} Team
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_leave_created_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -688,7 +703,6 @@ The {company_name} Team
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_leave_approved_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -792,7 +806,6 @@ The {company_name} Team
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_leave_rejected_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -889,7 +902,6 @@ The {company_name} Team
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_leave_cancelled_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1025,7 +1037,6 @@ def send_task_created_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_created_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1126,7 +1137,6 @@ def send_task_updated_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_updated_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1243,7 +1253,6 @@ def send_task_status_changed_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_status_changed_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1351,7 +1360,6 @@ def send_task_assigned_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_assigned_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1448,7 +1456,6 @@ def send_task_unassigned_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_unassigned_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1553,7 +1560,6 @@ def send_task_permission_changed_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_permission_changed_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
 
@@ -1650,6 +1656,408 @@ def send_task_deleted_notification(
         return email_result
     except Exception as e:
         print(f"[CELERY TASK ERROR] Error in send_task_deleted_notification: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise
+
+
+# ============================================================================
+# Report Export PDF Generation Task (F12B_api_spec.md)
+# ============================================================================
+
+@celery_app.task(name="generate_report_export_pdf", bind=True, max_retries=3)
+def generate_report_export_pdf(
+    self,
+    export_id: str,
+):
+    """Generate PDF export for a report export request.
+    
+    Based on F12B_api_spec.md Section 4.3.1 - Asynchronous PDF generation.
+    
+    This task:
+    1. Updates export status to PROCESSING
+    2. Fetches report data based on export filters
+    3. Generates PDF file
+    4. Saves PDF to exports directory
+    5. Updates export status to COMPLETED or FAILED
+    
+    Args:
+        export_id: Export ID (UUID as string)
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        print(f"[CELERY TASK] ===== generate_report_export_pdf STARTED =====")
+        print(f"[CELERY TASK] Export ID: {export_id}")
+        
+        # Convert async database URL to sync (replace postgresql+asyncpg with postgresql+psycopg2)
+        sync_database_url = settings.database_url.replace(
+            "postgresql+asyncpg://", 
+            "postgresql+psycopg2://"
+        ).replace(
+            "postgresql://",
+            "postgresql+psycopg2://"
+        )
+        
+        # Create a synchronous engine (no event loop issues)
+        # Use NullPool to avoid keeping connections between tasks
+        sync_engine = create_engine(
+            sync_database_url,
+            poolclass=NullPool,
+            echo=False,
+        )
+        
+        # Create session maker
+        SyncSessionLocal = sessionmaker(
+            bind=sync_engine,
+            class_=Session,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
+        
+        # Create session
+        with SyncSessionLocal() as session:
+            try:
+                # Get export record
+                export = session.query(Export).filter(Export.id == UUID(export_id)).first()
+                if not export:
+                    print(f"[CELERY TASK ERROR] Export {export_id} not found")
+                    return False
+                
+                # Check if already expired
+                now = datetime.now(timezone.utc)
+                if export.expires_at < now:
+                    print(f"[CELERY TASK] Export {export_id} has expired")
+                    export.status = "EXPIRED"
+                    session.commit()
+                    return False
+                
+                # Update status to PROCESSING
+                export.status = "PROCESSING"
+                session.commit()
+                print(f"[CELERY TASK] Export {export_id} status updated to PROCESSING")
+                
+                # Generate PDF based on report type
+                try:
+                    # Create exports directory if it doesn't exist
+                    exports_dir = Path("/app/exports")
+                    exports_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Generate PDF file path
+                    date_str = export.created_at.date().strftime("%Y-%m-%d")
+                    filename = f"report_{export.report_type.lower()}_{date_str}_{export.id}.pdf"
+                    file_path = exports_dir / filename
+                    
+                    # Generate PDF based on report type
+                    if export.report_type == "ATTENDANCE":
+                        pdf_bytes = _generate_attendance_pdf(session, export)
+                    else:
+                        # For other report types, generate a placeholder PDF
+                        pdf_bytes = _generate_placeholder_pdf(export)
+                    
+                    # Save PDF to file
+                    with open(file_path, "wb") as f:
+                        f.write(pdf_bytes)
+                    
+                    file_size = len(pdf_bytes)
+                    print(f"[CELERY TASK] PDF generated: {file_path} ({file_size} bytes)")
+                    
+                    # Update export status to COMPLETED
+                    export.status = "COMPLETED"
+                    export.file_path = str(file_path)
+                    export.file_size = file_size
+                    export.completed_at = datetime.now(timezone.utc)
+                    session.commit()
+                    print(f"[CELERY TASK] ✅ Export {export_id} completed successfully")
+                    
+                    return True
+                    
+                except Exception as pdf_error:
+                    print(f"[CELERY TASK ERROR] PDF generation failed: {str(pdf_error)}")
+                    traceback.print_exc()
+                    
+                    # Update export status to FAILED
+                    export.status = "FAILED"
+                    export.error_message = str(pdf_error)[:1000]  # Limit to 1000 chars
+                    export.failed_at = datetime.now(timezone.utc)
+                    session.commit()
+                    return False
+                
+            except Exception as e:
+                session.rollback()
+                print(f"[CELERY TASK ERROR] Database error, rolled back: {str(e)}")
+                traceback.print_exc()
+                return False
+        
+        # Dispose of the engine to clean up connections
+        sync_engine.dispose()
+        
+    except Exception as e:
+        print(f"[CELERY TASK ERROR] Error in generate_report_export_pdf: {str(e)}")
+        traceback.print_exc()
+        # Try to update export status to FAILED if possible
+        try:
+            sync_database_url = settings.database_url.replace(
+                "postgresql+asyncpg://", 
+                "postgresql+psycopg2://"
+            ).replace(
+                "postgresql://",
+                "postgresql+psycopg2://"
+            )
+            sync_engine = create_engine(sync_database_url, poolclass=NullPool, echo=False)
+            SyncSessionLocal = sessionmaker(bind=sync_engine, class_=Session)
+            with SyncSessionLocal() as session:
+                export = session.query(Export).filter(Export.id == UUID(export_id)).first()
+                if export:
+                    export.status = "FAILED"
+                    export.error_message = str(e)[:1000]
+                    export.failed_at = datetime.now(timezone.utc)
+                    session.commit()
+            sync_engine.dispose()
+        except Exception as update_error:
+            print(f"[CELERY TASK ERROR] Failed to update export status: {str(update_error)}")
+        return False
+
+
+def _generate_attendance_pdf(session: Session, export: Export) -> bytes:
+    """Generate PDF for attendance report.
+    
+    Args:
+        session: SQLAlchemy session
+        export: Export model instance
+    
+    Returns:
+        bytes: PDF file content
+    """
+    try:
+        
+        # Parse filters
+        filters = export.filters or {}
+        start_date = filters.get("start_date")
+        end_date = filters.get("end_date")
+        employee_id = filters.get("employee_id")
+        department = filters.get("department")
+        status_filter = filters.get("status")
+        
+        # Convert date strings to date objects if needed
+        if start_date and isinstance(start_date, str):
+            start_date = datetime.fromisoformat(start_date).date()
+        if end_date and isinstance(end_date, str):
+            end_date = datetime.fromisoformat(end_date).date()
+        
+        # Fetch attendance data
+        
+        query = (session.query(Attendance).join(Attendance.employee).join(Employee.user))
+        query = query.filter(Attendance.company_id == export.company_id)
+        
+        if start_date:
+            query = query.filter(Attendance.attendance_date >= start_date)
+        if end_date:
+            query = query.filter(Attendance.attendance_date <= end_date)
+        if employee_id:
+            query = query.filter(Attendance.employee_id == UUID(employee_id))
+        if department:
+            query = query.filter(Employee.department == department)
+        
+        attendances = query.order_by(Attendance.attendance_date.desc()).all()
+        
+        # Create PDF in memory
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        story = []
+        
+        # Styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            textColor=colors.HexColor('#1a1a1a'),
+            spaceAfter=30,
+        )
+        
+        # Title
+        title = Paragraph(f"Attendance Report - {export.report_type}", title_style)
+        story.append(title)
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Report metadata
+        meta_data = [
+            f"Generated: {export.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Company ID: {export.company_id}",
+        ]
+        if start_date:
+            meta_data.append(f"Start Date: {start_date}")
+        if end_date:
+            meta_data.append(f"End Date: {end_date}")
+        if employee_id:
+            meta_data.append(f"Employee ID: {employee_id}")
+        if department:
+            meta_data.append(f"Department: {department}")
+        if status_filter:
+            meta_data.append(f"Status: {status_filter}")
+        
+        for meta in meta_data:
+            story.append(Paragraph(meta, styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Table data
+        table_data = [['Employee Name', 'Date', 'Status', 'Check In', 'Check Out', 'Hours Worked']]
+        
+        for att in attendances:
+            employee = att.employee
+            if employee and employee.user:
+                employee_name = f"{employee.user.first_name or ''} {employee.user.last_name or ''}".strip()
+                if not employee_name:
+                    employee_name = "Unknown"
+            else:
+                employee_name = "Unknown"
+            
+            # Parse worked_time
+            hours_worked = "0.0"
+            if att.worked_time:
+                hours_match = re.search(r'(\d+)h', att.worked_time)
+                minutes_match = re.search(r'(\d+)m', att.worked_time)
+                hours = float(hours_match.group(1)) if hours_match else 0.0
+                minutes = float(minutes_match.group(1)) if minutes_match else 0.0
+                hours_worked = f"{hours + (minutes / 60.0):.2f}"
+            
+            check_in = att.check_in_time.strftime('%H:%M:%S') if att.check_in_time else "N/A"
+            check_out = att.check_out_time.strftime('%H:%M:%S') if att.check_out_time else "N/A"
+            status = att.status or "N/A"
+            
+            table_data.append([
+                employee_name,
+                att.attendance_date.strftime('%Y-%m-%d') if att.attendance_date else "N/A",
+                status,
+                check_in,
+                check_out,
+                hours_worked,
+            ])
+        
+        # Create table
+        if len(table_data) > 1:
+            table = Table(table_data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch, 1*inch, 1*inch])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ]))
+            story.append(table)
+        else:
+            story.append(Paragraph("No attendance data found for the specified filters.", styles['Normal']))
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+        
+    except ImportError:
+        # If reportlab is not installed, generate a simple text-based PDF placeholder
+        print("[CELERY TASK WARNING] reportlab not installed, generating placeholder PDF")
+        return _generate_placeholder_pdf(export)
+    except Exception as e:
+        print(f"[CELERY TASK ERROR] Error generating attendance PDF: {str(e)}")
+        raise
+
+
+def _generate_placeholder_pdf(export: Export) -> bytes:
+    """Generate a placeholder PDF when report type is not fully implemented.
+    
+    Args:
+        export: Export model instance
+    
+    Returns:
+        bytes: PDF file content
+    """
+    try:
+        
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        story = []
+        styles = getSampleStyleSheet()
+        
+        title = Paragraph(f"Report Export - {export.report_type}", styles['Heading1'])
+        story.append(title)
+        story.append(Spacer(1, 0.3*inch))
+        
+        message = Paragraph(
+            f"This report type ({export.report_type}) PDF generation is not yet fully implemented. "
+            f"Export ID: {export.id}",
+            styles['Normal']
+        )
+        story.append(message)
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+        
+    except ImportError:
+        # If reportlab is not installed, return a minimal PDF
+        # This is a minimal valid PDF structure
+        pdf_content = b"""%PDF-1.4
+1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+/Resources <<
+/Font <<
+/F1 <<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+>>
+>>
+>>
+>>
+endobj
+4 0 obj
+<<
+/Length 44
+>>
+stream
+BT
+/F1 12 Tf
+100 700 Td
+(Report Export - Placeholder) Tj
+ET
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000306 00000 n
+trailer
+<<
+/Size 5
+/Root 1 0 R
+>>
+startxref
+400
+%%EOF"""
+        return pdf_content

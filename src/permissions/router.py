@@ -22,6 +22,7 @@ from src.permissions.constants import (
     SUCCESS_ROLES_RETRIEVED,
     SUCCESS_ROLE_RETRIEVED,
 )
+from src.permissions.utils import format_last_modified
 from src.users.models import User
 from src.users.utils import generate_request_id
 
@@ -74,7 +75,6 @@ async def list_roles(
     if hasattr(result, '_etag') and result._etag:
         json_response.headers["ETag"] = result._etag
     if hasattr(result, '_last_modified') and result._last_modified:
-        from src.permissions.utils import format_last_modified
         json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response
 
@@ -117,6 +117,5 @@ async def get_role(
     if hasattr(result, '_etag') and result._etag:
         json_response.headers["ETag"] = result._etag
     if hasattr(result, '_last_modified') and result._last_modified:
-        from src.permissions.utils import format_last_modified
         json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response

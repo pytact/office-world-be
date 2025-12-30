@@ -58,6 +58,8 @@ from src.employees.utils import generate_etag, format_last_modified
 from src.config import settings
 from fastapi import status
 from fastapi.responses import Response as FastAPIResponse
+from src.exceptions import ValidationError
+from src.permissions.constants import VALID_ROLE_CODES
 
 
 class EmployeeService:
@@ -73,7 +75,6 @@ class EmployeeService:
     def _validate_sort_field(self, sort_by: str) -> None:
         """Validate sort field."""
         if sort_by not in VALID_SORT_FIELDS:
-            from src.exceptions import ValidationError
             raise ValidationError(
                 message=f"Invalid sort field: {sort_by}. Valid fields: {', '.join(VALID_SORT_FIELDS)}",
                 error_code="INVALID_SORT_FIELD",
@@ -83,7 +84,6 @@ class EmployeeService:
     def _validate_sort_order(self, sort_order: str) -> None:
         """Validate sort order."""
         if sort_order not in VALID_SORT_ORDERS:
-            from src.exceptions import ValidationError
             raise ValidationError(
                 message=f"Invalid sort order: {sort_order}. Valid orders: {', '.join(VALID_SORT_ORDERS)}",
                 error_code="INVALID_SORT_ORDER",
@@ -93,7 +93,6 @@ class EmployeeService:
     def _validate_enum_value(self, value: Optional[str], valid_values: list[str], field_name: str) -> None:
         """Validate ENUM value."""
         if value is not None and value not in valid_values:
-            from src.exceptions import ValidationError
             raise ValidationError(
                 message=f"Invalid {field_name}: {value}. Valid values: {', '.join(valid_values)}",
                 error_code=f"INVALID_{field_name.upper()}",
@@ -189,9 +188,7 @@ class EmployeeService:
         
         # Validate role_code if provided
         if query.role_code is not None:
-            from src.permissions.constants import VALID_ROLE_CODES
             if query.role_code.lower() not in VALID_ROLE_CODES:
-                from src.exceptions import ValidationError
                 raise ValidationError(
                     message=f"Invalid role_code: {query.role_code}. Valid values: {', '.join(VALID_ROLE_CODES)}",
                     error_code="VALIDATION_FAILED",
@@ -422,7 +419,6 @@ class EmployeeService:
         
         # Validate joining_date is not in the future
         if data.joining_date > date.today():
-            from src.exceptions import ValidationError
             raise ValidationError(
                 message="Joining date cannot be in the future",
                 error_code="INVALID_JOINING_DATE",

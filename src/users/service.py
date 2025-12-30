@@ -62,6 +62,10 @@ from src.users.constants import (
 )
 from src.pagination import PagedCollection
 from src.celery_worker import send_invitation_email
+from src.audits.repository import AuditLogRepository
+from src.config import settings
+import logging
+from src.auth.exceptions import PasswordWeak
 
 
 class UserService:
@@ -80,12 +84,12 @@ class UserService:
         if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
             return "Password must contain at least one special character"
         return None
-    """Service for user management business logic."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = UserRepository(session)
         self.employee_repository = EmployeeRepository(session)
+        self.audit_repository = AuditLogRepository(session)
 
     def _calculate_invitation_status(
         self, invite_at: Optional[datetime], activate_at: Optional[datetime], expiry: Optional[datetime]
@@ -312,7 +316,6 @@ class UserService:
             etag = generate_etag(most_recent_updated_at)
         else:
             # Empty result set - use current timestamp
-            from datetime import timezone
             etag = generate_etag(datetime.now(timezone.utc))
         
         # Check If-None-Match header for conditional request
@@ -379,7 +382,6 @@ class UserService:
             etag = generate_etag(most_recent_updated_at)
         else:
             # Empty result set - use current timestamp
-            from datetime import timezone
             etag = generate_etag(datetime.now(timezone.utc))
         
         # Check If-None-Match header for conditional request
@@ -439,7 +441,12 @@ class UserService:
         return user_read
 
     async def invite_user(
-        self, invite_data: UserInvite, inviter_id: UUID, inviter_company_id: Optional[UUID] = None
+        self,
+        invite_data: UserInvite,
+        inviter_id: UUID,
+        inviter_company_id: Optional[UUID] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> UserRead:
         """Invite a new user with role and company assignment.
         
@@ -574,9 +581,8 @@ class UserService:
         
         # Format expiry date for email
         expiry_date_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
         # Build activation URL using frontend_url from settings
-        from src.config import settings
         if hasattr(settings, 'frontend_url'):
             activation_url = f"{settings.frontend_url}/activate/{user.token}"
         else:
@@ -592,6 +598,36 @@ class UserService:
             expiry_date=expiry_date_str,
             activation_url=activation_url,
         )
+        
+        # Create audit log for user invitation
+        # Note: company_id is required for audit logs, use inviter's company or the assigned company
+        audit_company_id = company_id if company_id else inviter_company_id
+        if audit_company_id:
+            try:
+                new_values = {
+                    "email": user.email,
+                    "role_id": str(role.id),
+                    "role_code": role.code,
+                }
+                if company_id:
+                    new_values["company_id"] = str(company_id)
+                
+                await self.audit_repository.create(
+                    company_id=audit_company_id,
+                    action_code="USER_INVITED",
+                    table_name="users",
+                    record_id=user.id,
+                    actor_id=inviter_id,
+                    old_values=None,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"User '{user.email}' invited with role '{role.code}'",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for user invitation: {e}")
         
         # Refresh user with relationships
         user = await self.repository.get_by_id(user.id)
@@ -687,7 +723,6 @@ class UserService:
             # Validate password complexity
             password_issue = self._validate_password_complexity(update_data.new_password)
             if password_issue:
-                from src.auth.exceptions import PasswordWeak
                 raise PasswordWeak(password_issue)
             
             # Update password
@@ -1194,9 +1229,8 @@ class UserService:
         
         # Format expiry date for email
         expiry_date_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
         # Build activation URL using frontend_url from settings
-        from src.config import settings
         if hasattr(settings, 'frontend_url'):
             activation_url = f"{settings.frontend_url}/activate/{user.token}"
         else:

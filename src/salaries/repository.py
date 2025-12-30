@@ -7,7 +7,7 @@ All methods filter by deleted_at IS NULL for soft-delete support.
 
 from uuid import UUID
 from typing import Optional
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from sqlalchemy import select, func, and_, or_, desc, asc
 from sqlalchemy.orm import selectinload
@@ -534,7 +534,6 @@ class SalaryRepository:
         self, salary_details: SalaryDetails, deleted_by: UUID
     ) -> SalaryDetails:
         """Soft delete salary details record."""
-        from datetime import datetime, timezone
         salary_details.deleted_at = datetime.now(timezone.utc)
         salary_details.deleted_by = deleted_by
         await self.session.commit()
@@ -571,7 +570,6 @@ class SalaryRepository:
         physically removed from the database, preserving audit trail and ensuring
         past payments remain unchanged.
         """
-        from datetime import datetime, timezone
         bank_info.deleted_at = datetime.now(timezone.utc)
         bank_info.deleted_by = deleted_by
         await self.session.commit()
@@ -599,7 +597,6 @@ class SalaryRepository:
         self, salary_payment: SalaryPayment, deleted_by: UUID
     ) -> SalaryPayment:
         """Soft delete salary payment record."""
-        from datetime import datetime, timezone
         salary_payment.deleted_at = datetime.now(timezone.utc)
         salary_payment.deleted_by = deleted_by
         await self.session.commit()

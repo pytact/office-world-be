@@ -70,6 +70,7 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
       - ./alembic:/app/alembic
+      - exports_data:/app/exports
 
   worker:
     build: .
@@ -97,6 +98,8 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
       - ./alembic:/app/alembic
+      - exports_data:/app/exports
 
 volumes:
   postgres_data:
+  exports_data:

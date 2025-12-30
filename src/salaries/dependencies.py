@@ -9,10 +9,11 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database import get_session
 from src.auth.dependencies import oauth2_scheme
-from src.auth.utils import decode_token
+from src.auth.utils import decode_token, is_token_blacklisted
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
 from src.permissions.models import Role
+from src.employees.repository import EmployeeRepository
 from src.salaries.service import SalaryService
 from src.salaries.schemas import SalaryCreate, BankInfoUpsert, SalaryPaymentCreate, SalaryPaymentRun, SalaryOverviewQuery, SalaryPaymentListQuery
 from src.salaries.exceptions import InsufficientPermissions
@@ -32,8 +33,6 @@ async def get_current_user_with_company(
     
     Based on F6_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
-    from src.auth.utils import is_token_blacklisted
-    
     # CRITICAL: Check if token is None before decoding
     if not token:
         raise InvalidCredentials()
@@ -121,7 +120,6 @@ async def get_current_user_with_employee_access(
     Returns tuple of (User, company_id).
     Raises InsufficientPermissions if Employee tries to access another employee's records.
     """
-    from src.employees.repository import EmployeeRepository
     
     user, company_id, role = user_company
     role_lower = role.lower() if role else ""
@@ -199,6 +197,8 @@ class SalaryApiDep:
         data: SalaryCreate,
         user_id: UUID,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         """Revise salary details."""
         return await self.service.revise_salary(
@@ -207,6 +207,8 @@ class SalaryApiDep:
             data=data,
             user_id=user_id,
             if_match=if_match,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
 
     async def create_or_update_salary(

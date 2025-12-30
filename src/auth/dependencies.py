@@ -27,9 +27,11 @@ if TYPE_CHECKING:
     )
 
 # OAuth2 scheme for Swagger UI
+# CRITICAL: MUST use OAuth2PasswordBearer (NOT HTTPBearer) for Swagger UI integration
+# Based on auth_setup.md RULE 3.1.1 and error_prevention.md RULE 3.1.2
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/v1/auth/token",  # Full path including main router prefix
-    auto_error=False,
+    tokenUrl="/v1/auth/token",  # Full path including main router prefix (/v1/api/auth/token)
+    auto_error=False,  # CRITICAL: Don't auto-raise if token missing (allows graceful handling)
 )
 
 

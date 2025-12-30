@@ -9,6 +9,7 @@ from src.database import Base
 if TYPE_CHECKING:
     from src.permissions.models import UserRoleAssignment
     from src.employees.models import Employee
+    from src.audits.models import AuditLog
 else:
     # Import at runtime for foreign_keys reference
     from src.employees.models import Employee
@@ -135,4 +136,9 @@ class Company(Base):
         "Employee",
         foreign_keys="Employee.company_id",
         back_populates="company",
+    )
+    audit_logs: Mapped[list["AuditLog"]] = relationship(
+        "AuditLog",
+        back_populates="company",
+        passive_deletes=True,  # Let database handle RESTRICT constraint, don't modify audit_logs
     )

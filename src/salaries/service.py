@@ -46,7 +46,9 @@ from src.salaries.exceptions import (
     PreconditionFailed,
     SalarySlipNotFound,
 )
+import logging
 from src.exceptions import ConflictError, ValidationError
+from src.audits.repository import AuditLogRepository
 from src.salaries.utils import (
     generate_etag,
     format_last_modified,
@@ -92,6 +94,7 @@ class SalaryService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = SalaryRepository(session)
+        self.audit_repository = AuditLogRepository(session)
 
     async def _get_user_name(self, user_id: Optional[UUID]) -> Optional[str]:
         """Get user full name from user_id.
@@ -352,6 +355,8 @@ class SalaryService:
         data: SalaryCreate,
         user_id: UUID,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> SalaryDetailsResponse:
         """Revise existing salary (increment/change).
         
@@ -439,6 +444,37 @@ class SalaryService:
         )
         await self.repository.create_salary_history(history)
         
+        # Create audit log for salary update (revise is also an update)
+        if company_id:
+            try:
+                old_values = {
+                    "amount": str(previous_amount),
+                    "effective_from": active_salary.effective_from.isoformat() if active_salary.effective_from else None,
+                    "effective_to": active_salary.effective_to.isoformat() if active_salary.effective_to else None,
+                }
+                new_values = {
+                    "amount": str(data.amount),
+                    "effective_from": data.effective_from.isoformat(),
+                    "effective_to": data.effective_to.isoformat() if data.effective_to else None,
+                }
+                
+                await self.audit_repository.create(
+                    company_id=company_id,
+                    action_code="SALARY_UPDATED",
+                    table_name="salary_details",
+                    record_id=new_salary.id,
+                    actor_id=user_id,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Salary revised for employee (amount: {previous_amount} -> {data.amount})",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for salary revision: {e}")
+        
         # Build response (return the new salary record, not the old one)
         created_by_name = await self._get_user_name(new_salary.created_by)
         updated_by_name = await self._get_user_name(new_salary.updated_by)
@@ -467,6 +503,8 @@ class SalaryService:
         data: SalaryCreate,
         user_id: UUID,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> SalaryDetailsResponse:
         """Update existing salary details by ID.
         
@@ -576,6 +614,37 @@ class SalaryService:
             changed_by=user_id,
         )
         await self.repository.create_salary_history(history)
+        
+        # Create audit log for salary update
+        if company_id:
+            try:
+                old_values = {
+                    "amount": str(previous_amount),
+                    "effective_from": old_salary.effective_from.isoformat() if old_salary.effective_from else None,
+                    "effective_to": old_salary.effective_to.isoformat() if old_salary.effective_to else None,
+                }
+                new_values = {
+                    "amount": str(data.amount),
+                    "effective_from": data.effective_from.isoformat(),
+                    "effective_to": data.effective_to.isoformat() if data.effective_to else None,
+                }
+                
+                await self.audit_repository.create(
+                    company_id=company_id,
+                    action_code="SALARY_UPDATED",
+                    table_name="salary_details",
+                    record_id=new_salary.id,
+                    actor_id=user_id,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Salary updated for employee (amount: {previous_amount} -> {data.amount})",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for salary update: {e}")
         
         # Build response (return the new salary record, not the old one)
         created_by_name = await self._get_user_name(new_salary.created_by)
@@ -1546,7 +1615,6 @@ class SalaryService:
         # Get payment
         payment = await self.repository.get_salary_payment_by_id(payment_id)
         if not payment or payment.employee_id != employee_id:
-            from src.salaries.exceptions import SalaryPaymentNotFound
             raise SalaryPaymentNotFound(str(payment_id))
         
         # Check if slip exists

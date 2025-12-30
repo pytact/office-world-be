@@ -8,7 +8,7 @@ import logging
 from uuid import UUID
 from typing import Optional
 from fastapi import APIRouter, Depends, status, Header, Response, Request
-from fastapi.responses import JSONResponse, Response as FastAPIResponse
+from fastapi.responses import JSONResponse, Response as FastAPIResponse, Response as PDFResponse
 from src.schemas import StandardResponse
 from src.salaries.schemas import (
     SalaryCreate,
@@ -216,12 +216,18 @@ async def revise_salary(
     # Handle empty strings for If-Match
     if_match_value = if_match if if_match and if_match.strip() else None
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     result = await api.revise_salary(
         employee_id=employee_id,
         company_id=company_id,
         data=data,
         user_id=user.id,
         if_match=if_match_value,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     response_data = StandardResponse(
@@ -634,7 +640,6 @@ async def get_salary_slip(
     filename = f"salary_slip_{year}_{month:02d}.pdf"
     
     # Return PDF response
-    from fastapi.responses import Response as PDFResponse
     pdf_response = PDFResponse(
         content=pdf_bytes,
         media_type="application/pdf",

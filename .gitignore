@@ -54,6 +54,3 @@ alembic/versions/*.pyc
 # Rules and guidelines (internal documentation)
 cursor/rules/
 
-# Audits module
-src/audits/
-

@@ -31,6 +31,12 @@ from src.celery_worker import (
     send_leave_created_notification, send_leave_approved_notification,
     send_leave_rejected_notification, send_leave_cancelled_notification
 )
+from src.audits.repository import AuditLogRepository
+import logging
+from src.employees.repository import EmployeeRepository
+from src.permissions.models import UserRoleAssignment, Role
+from sqlalchemy.orm import selectinload
+from sqlalchemy import select
 
 
 class LeaveService:
@@ -39,6 +45,7 @@ class LeaveService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = LeaveRepository(session)
+        self.audit_repository = AuditLogRepository(session)
 
     async def create_leave_request(
         self,
@@ -243,7 +250,9 @@ class LeaveService:
         employee_id: Optional[UUID],
         user_role: str,
         company_id: UUID = None,
-        if_match: str = None
+        if_match: str = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> LeaveRead:
         """Perform approve/reject/cancel action on leave request."""
         leave_request = await self.repository.get_by_id(leave_id)
@@ -265,7 +274,6 @@ class LeaveService:
             )
 
         # Get employee for notifications (for approve/reject actions)
-        from src.employees.repository import EmployeeRepository
         employee_repo = EmployeeRepository(self.session)
         user = None
         if employee_id:
@@ -278,11 +286,11 @@ class LeaveService:
         if action_data.action == ActionType.APPROVE:
             if not user:
                 raise InvalidApprover("user", user_id)
-            await self._approve_leave(leave_request, user, user_role)
+            await self._approve_leave(leave_request, user, user_role, ip_address=ip_address, user_agent=user_agent)
         elif action_data.action == ActionType.REJECT:
             if not user:
                 raise InvalidApprover("user", user_id)
-            await self._reject_leave(leave_request, action_data.rejection_reason, user, user_role)
+            await self._reject_leave(leave_request, action_data.rejection_reason, user, user_role, ip_address=ip_address, user_agent=user_agent)
         elif action_data.action == ActionType.CANCEL:
             if not employee_id:
                 raise BusinessRuleFailed(
@@ -298,7 +306,14 @@ class LeaveService:
         result._etag = generate_etag(updated_leave.updated_at)
         return result
 
-    async def _approve_leave(self, leave_request: LeaveRequest, user, user_role: str) -> None:
+    async def _approve_leave(
+        self,
+        leave_request: LeaveRequest,
+        user,
+        user_role: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> None:
         """Approve leave request with workflow logic."""
         current_stage = get_workflow_stage_from_status(leave_request.manager_status, leave_request.hr_status)
 
@@ -333,6 +348,33 @@ class LeaveService:
             leave_request.manager_status = STATUS_APPROVED_MANAGER
             leave_request.manager_approved_at = now
             # HR status remains PENDING_HR
+
+            # Create audit log for leave approval
+            try:
+                old_values = {
+                    "manager_status": "PENDING_MANAGER",
+                }
+                new_values = {
+                    "manager_status": STATUS_APPROVED_MANAGER,
+                    "manager_approved_at": now.isoformat(),
+                }
+                
+                await self.audit_repository.create(
+                    company_id=leave_request.company_id,
+                    action_code="LEAVE_APPROVED",
+                    table_name="leave_requests",
+                    record_id=leave_request.id,
+                    actor_id=user.id if hasattr(user, 'id') else None,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Leave request approved by Manager",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for leave approval: {e}")
 
             # Trigger notifications to HR approver and applicant
             if leave_request.hr_approver and leave_request.hr_approver.user:
@@ -373,6 +415,33 @@ class LeaveService:
             leave_request.hr_status = STATUS_APPROVED_HR
             leave_request.hr_approved_at = now
 
+            # Create audit log for leave approval
+            try:
+                old_values = {
+                    "hr_status": "PENDING_HR",
+                }
+                new_values = {
+                    "hr_status": STATUS_APPROVED_HR,
+                    "hr_approved_at": now.isoformat(),
+                }
+                
+                await self.audit_repository.create(
+                    company_id=leave_request.company_id,
+                    action_code="LEAVE_APPROVED",
+                    table_name="leave_requests",
+                    record_id=leave_request.id,
+                    actor_id=user.id if hasattr(user, 'id') else None,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Leave request approved by HR",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for leave approval: {e}")
+
             # Trigger notification to applicant
             if leave_request.employee and leave_request.employee.user:
                 send_leave_approved_notification.delay(
@@ -395,6 +464,33 @@ class LeaveService:
             leave_request.hr_status = STATUS_APPROVED_HR
             leave_request.hr_approved_at = now
 
+            # Create audit log for leave approval
+            try:
+                old_values = {
+                    "hr_status": "PENDING_HR",
+                }
+                new_values = {
+                    "hr_status": STATUS_APPROVED_HR,
+                    "hr_approved_at": now.isoformat(),
+                }
+                
+                await self.audit_repository.create(
+                    company_id=leave_request.company_id,
+                    action_code="LEAVE_APPROVED",
+                    table_name="leave_requests",
+                    record_id=leave_request.id,
+                    actor_id=user.id if hasattr(user, 'id') else None,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Leave request approved by CEO",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for leave approval: {e}")
+
             # Trigger notification to applicant
             if leave_request.employee and leave_request.employee.user:
                 send_leave_approved_notification.delay(
@@ -413,7 +509,15 @@ class LeaveService:
                     notification_type="leave_approval"
                 )
 
-    async def _reject_leave(self, leave_request: LeaveRequest, rejection_reason: str, user, user_role: str) -> None:
+    async def _reject_leave(
+        self,
+        leave_request: LeaveRequest,
+        rejection_reason: str,
+        user,
+        user_role: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> None:
         """Reject leave request."""
         current_stage = get_workflow_stage_from_status(leave_request.manager_status, leave_request.hr_status)
 
@@ -448,6 +552,33 @@ class LeaveService:
             leave_request.manager_status = STATUS_REJECTED_MANAGER
             leave_request.manager_rejection_reason = rejection_reason
 
+            # Create audit log for leave rejection
+            try:
+                old_values = {
+                    "manager_status": "PENDING_MANAGER",
+                }
+                new_values = {
+                    "manager_status": STATUS_REJECTED_MANAGER,
+                    "manager_rejection_reason": rejection_reason,
+                }
+                
+                await self.audit_repository.create(
+                    company_id=leave_request.company_id,
+                    action_code="LEAVE_REJECTED",
+                    table_name="leave_requests",
+                    record_id=leave_request.id,
+                    actor_id=user.id if hasattr(user, 'id') else None,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Leave request rejected by Manager: {rejection_reason}",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for leave rejection: {e}")
+
             # Trigger notification to applicant
             if leave_request.employee and leave_request.employee.user:
                 send_leave_rejected_notification.delay(
@@ -467,6 +598,33 @@ class LeaveService:
         elif current_stage == "hr":
             leave_request.hr_status = STATUS_REJECTED_HR
             leave_request.hr_rejection_reason = rejection_reason
+
+            # Create audit log for leave rejection
+            try:
+                old_values = {
+                    "hr_status": "PENDING_HR",
+                }
+                new_values = {
+                    "hr_status": STATUS_REJECTED_HR,
+                    "hr_rejection_reason": rejection_reason,
+                }
+                
+                await self.audit_repository.create(
+                    company_id=leave_request.company_id,
+                    action_code="LEAVE_REJECTED",
+                    table_name="leave_requests",
+                    record_id=leave_request.id,
+                    actor_id=user.id if hasattr(user, 'id') else None,
+                    old_values=old_values,
+                    new_values=new_values,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Leave request rejected by HR: {rejection_reason}",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for leave rejection: {e}")
 
             # Trigger notification to applicant
             if leave_request.employee and leave_request.employee.user:
@@ -559,10 +717,6 @@ class LeaveService:
     async def _validate_approvers(self, manager_approver_id: UUID, hr_approver_id: UUID, company_id: UUID) -> None:
         """Validate that approvers exist and have correct roles."""
         # Import here to avoid circular imports
-        from src.employees.repository import EmployeeRepository
-        from src.permissions.models import UserRoleAssignment, Role
-        from sqlalchemy.orm import selectinload
-        from sqlalchemy import select
 
         employee_repo = EmployeeRepository(self.session)
 
@@ -619,7 +773,6 @@ class LeaveService:
             # Can only see own leaves - need employee_id to compare
             if not employee_id:
                 # Try to get employee_id from user_id
-                from src.employees.repository import EmployeeRepository
                 employee_repo = EmployeeRepository(self.session)
                 employee = await employee_repo.get_by_user_id(user_id, company_id)
                 if employee:
@@ -633,7 +786,6 @@ class LeaveService:
             # Can see own leaves or leaves assigned for approval
             if not employee_id:
                 # Try to get employee_id from user_id
-                from src.employees.repository import EmployeeRepository
                 employee_repo = EmployeeRepository(self.session)
                 employee = await employee_repo.get_by_user_id(user_id, company_id)
                 if employee:

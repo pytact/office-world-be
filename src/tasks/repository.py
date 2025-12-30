@@ -7,7 +7,7 @@ All methods filter by is_deleted = False for hard-delete support.
 
 from uuid import UUID
 from typing import Optional
-from sqlalchemy import select, func, and_, or_, desc, asc
+from sqlalchemy import select, func, and_, or_, desc, asc, exists
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.tasks.models import Task, TaskAssignment
@@ -153,7 +153,6 @@ class TaskRepository:
             if owner_id is not None and assigned_employee_id is not None and owner_id == assigned_employee_id:
                 # Employee sees own tasks OR assigned tasks (same employee)
                 # Use OR condition with subquery for assignments
-                from sqlalchemy import exists
                 assignment_exists = exists().where(
                     and_(
                         TaskAssignment.task_id == Task.id,
@@ -168,7 +167,6 @@ class TaskRepository:
                 )
             elif assigned_employee_id is not None:
                 # Employee sees only assigned tasks
-                from sqlalchemy import exists
                 assignment_exists = exists().where(
                     and_(
                         TaskAssignment.task_id == Task.id,

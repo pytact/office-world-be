@@ -9,7 +9,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database import get_session
 from src.auth.dependencies import oauth2_scheme
-from src.auth.utils import decode_token
+from src.auth.utils import decode_token, is_token_blacklisted
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
 from src.permissions.models import Role
@@ -31,8 +31,6 @@ async def get_current_user_with_company(
     
     Based on F5_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
-    from src.auth.utils import is_token_blacklisted
-    
     # CRITICAL: Check if token is None before decoding
     if not token:
         raise InvalidCredentials()

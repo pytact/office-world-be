@@ -1,11 +1,13 @@
 from uuid import UUID
 from typing import Optional, List, Tuple
+from datetime import datetime
 from sqlalchemy import select, func, and_, or_, desc, asc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.leaves.models import LeaveRequest
 from src.leaves.constants import SORT_FIELDS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from src.employees.models import Employee
 
 
 class LeaveRepository:
@@ -16,7 +18,6 @@ class LeaveRepository:
 
     async def get_by_id(self, leave_id: UUID) -> Optional[LeaveRequest]:
         """Get leave request by ID with eager loading."""
-        from src.employees.models import Employee
         result = await self.session.execute(
             select(LeaveRequest)
             .options(
@@ -51,7 +52,6 @@ class LeaveRepository:
         end_date: str
     ) -> List[LeaveRequest]:
         """Get leave requests for employee in date range (for overlap checking)."""
-        from datetime import datetime
         start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
 
@@ -80,7 +80,6 @@ class LeaveRepository:
         
         # Eagerly load relationships to avoid lazy loading issues in async context
         # Also load user relationships for employee, manager_approver, and hr_approver
-        from src.employees.models import Employee
         result = await self.session.execute(
             select(LeaveRequest)
             .options(
@@ -112,7 +111,6 @@ class LeaveRepository:
         user_role: str = None
     ) -> Tuple[List[LeaveRequest], int]:
         """List leave requests with pagination, filtering, and sorting."""
-        from src.employees.models import Employee
         query = select(LeaveRequest).options(
             selectinload(LeaveRequest.employee).selectinload(Employee.user),
             selectinload(LeaveRequest.manager_approver).selectinload(Employee.user),
@@ -254,7 +252,6 @@ class LeaveRepository:
         if not leave_request:
             return False
 
-        from datetime import datetime
         leave_request.deleted_at = datetime.utcnow()
         leave_request.deleted_by = deleted_by
         await self.session.commit()

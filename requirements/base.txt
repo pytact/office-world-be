@@ -6,6 +6,7 @@ python-multipart==0.0.6
 # Database
 sqlalchemy[asyncio]==2.0.23
 asyncpg==0.29.0
+psycopg2-binary==2.9.9
 alembic==1.12.1
 
 # Pydantic and validation
@@ -23,3 +24,6 @@ redis==5.0.1
 
 # Celery
 celery==5.3.4
+
+# PDF Generation
+reportlab==4.0.7

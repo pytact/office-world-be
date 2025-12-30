@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.employees.models import Employee
 from src.users.models import User
+from src.permissions.models import UserRoleAssignment, Role
 
 
 class EmployeeRepository:
@@ -155,8 +156,6 @@ class EmployeeRepository:
 
         # Filter by role_code if provided
         if role_code is not None:
-            from src.permissions.models import UserRoleAssignment, Role
-            
             # Normalize role_code to lowercase for case-insensitive matching
             role_code_lower = role_code.lower()
             
@@ -183,9 +182,7 @@ class EmployeeRepository:
         # For Manager role - exclude CEO and HR employees
         if exclude_ceo_hr:
             # Join with UserRoleAssignment to filter by role
-            from src.permissions.models import UserRoleAssignment
-            from src.permissions.models import Role
-            
+
             # Subquery to get CEO and HR role IDs
             ceo_hr_roles_subquery = (
                 select(Role.id)

@@ -9,10 +9,11 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database import get_session
 from src.auth.dependencies import oauth2_scheme
-from src.auth.utils import decode_token
+from src.auth.utils import decode_token, is_token_blacklisted
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
 from src.employees.repository import EmployeeRepository
+from src.permissions.models import Role
 from src.tasks.service import TaskService
 from src.tasks.schemas import (
     TaskCreate,
@@ -38,9 +39,6 @@ async def get_current_user_with_company(
     
     Based on F8_api_spec.md Section 2.1 - Multi-tenancy from token.
     """
-    from src.auth.utils import is_token_blacklisted
-    from src.permissions.models import Role
-    
     # CRITICAL: Check if token is provided
     if not token:
         raise InvalidCredentials()
@@ -174,6 +172,8 @@ class TaskApiDep:
         user_id: UUID,
         employee_id: Optional[UUID],
         role: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         """Create a new task."""
         return await self.service.create_task(
@@ -193,6 +193,8 @@ class TaskApiDep:
         employee_id: Optional[UUID],
         role: str,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         """Update task name and description."""
         return await self.service.update_task(
@@ -203,6 +205,8 @@ class TaskApiDep:
             employee_id=employee_id,
             role=role,
             if_match=if_match,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
 
     async def change_status(
@@ -255,6 +259,8 @@ class TaskApiDep:
         employee_id: Optional[UUID],
         role: str,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         """Hard delete a task (permanent removal)."""
         return await self.service.delete_task(
@@ -264,4 +270,6 @@ class TaskApiDep:
             employee_id=employee_id,
             role=role,
             if_match=if_match,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )

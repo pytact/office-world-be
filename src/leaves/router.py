@@ -12,6 +12,8 @@ from src.leaves.dependencies import (
 )
 from src.leaves.documentations.leaves_api_doc import LeaveApiDocs
 from src.leaves.constants import SUCCESS_LEAVE_REQUEST_CREATED, SUCCESS_LEAVE_REQUESTS_RETRIEVED, SUCCESS_LEAVE_REQUEST_RETRIEVED
+from src.leaves.exceptions import BusinessRuleFailed
+from src.leaves.utils import format_last_modified
 from src.users.models import User
 from src.users.utils import generate_request_id
 
@@ -66,7 +68,6 @@ async def create_leave(
     user, company_id, role, employee_id = user_company_role
 
     if not employee_id:
-        from src.leaves.exceptions import BusinessRuleFailed
         raise BusinessRuleFailed(
             "Employee record not found for this user",
             "employee_id",
@@ -116,7 +117,6 @@ async def get_leave(
     if hasattr(result, '_etag') and result._etag:
         json_response.headers["ETag"] = result._etag
     if hasattr(result, '_last_modified') and result._last_modified:
-        from src.leaves.utils import format_last_modified
         json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response
 
@@ -140,8 +140,15 @@ async def perform_leave_action(
     request_id = generate_request_id()
     user, company_id, role, employee_id = user_company_role
 
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     # For cancel action, we need employee_id. For approve/reject, we can use user_id to get employee
-    updated_leave = await api.perform_leave_action(leave_id, data, user.id, employee_id, role, company_id, if_match)
+    updated_leave = await api.perform_leave_action(
+        leave_id, data, user.id, employee_id, role, company_id, if_match,
+        ip_address=ip_address, user_agent=user_agent
+    )
 
     # Determine success message based on action
     action_messages = {

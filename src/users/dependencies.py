@@ -10,9 +10,11 @@ from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database import get_session
 from src.auth.dependencies import get_current_user, oauth2_scheme
-from src.auth.utils import decode_token
+from src.auth.utils import decode_token, is_token_blacklisted
 from src.auth.exceptions import InvalidCredentials
 from src.users.models import User
+from src.users.constants import ROLE_CODE_SUPERADMIN
+from src.users.schemas import PlatformUserListQuery
 from src.permissions.models import Role
 from src.users.service import UserService
 from src.users.exceptions import InsufficientPermissions
@@ -25,11 +27,10 @@ async def get_current_user_with_token(
     session: AsyncSession = Depends(get_session),
 ) -> tuple[User, dict]:
     """Get current authenticated user and token payload.
-    
+
     Returns tuple of (User, token_payload) for role and company_id extraction.
     Also checks if token is blacklisted (logged out).
     """
-    from src.auth.utils import is_token_blacklisted
     
     # CRITICAL: Check if token is None before decoding
     if not token:
@@ -69,11 +70,10 @@ async def get_current_superadmin(
     session: AsyncSession = Depends(get_session),
 ) -> User:
     """Get current authenticated user and verify SuperAdmin role.
-    
+
     Based on F1A_api_spec.md Section 3.1 - SuperAdmin role definition.
     SuperAdmin has role="superadmin" (case-insensitive) and company_id=null in token.
     """
-    from src.users.constants import ROLE_CODE_SUPERADMIN
     
     user, payload = user_token
     
@@ -158,7 +158,6 @@ class UserApiDep:
         """List users in company with field visibility rules and ETag support."""
         if company_id is None:
             # SuperAdmin accessing company users - convert CompanyUserListQuery to PlatformUserListQuery
-            from src.users.schemas import PlatformUserListQuery
             platform_query = PlatformUserListQuery(
                 page=query.page,
                 page_size=query.page_size,
@@ -176,9 +175,22 @@ class UserApiDep:
         """Get user details by ID with field visibility rules."""
         return await self.service.get_user_by_id(user_id, include_sensitive=include_sensitive, if_none_match=if_none_match)
 
-    async def invite_user(self, invite_data, inviter_id: UUID, inviter_company_id: Optional[UUID] = None):
+    async def invite_user(
+        self,
+        invite_data,
+        inviter_id: UUID,
+        inviter_company_id: Optional[UUID] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ):
         """Invite new user with role and company assignment."""
-        return await self.service.invite_user(invite_data, inviter_id, inviter_company_id)
+        return await self.service.invite_user(
+            invite_data,
+            inviter_id,
+            inviter_company_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
     async def update_user(
         self, user_id: UUID, update_data, current_user: User, current_user_company_id: Optional[UUID], if_match: Optional[str] = None

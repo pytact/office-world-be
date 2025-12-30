@@ -26,6 +26,7 @@ from src.users.schemas import (
     RolesListResponse,
 )
 from src.users.utils import generate_request_id, format_last_modified
+from src.config import settings
 from src.users.dependencies import (
     UserApiDep,
     get_current_superadmin,
@@ -176,7 +177,6 @@ async def list_company_users(
         return result
     
     # Update pagination URLs with company_id
-    from src.config import settings
     base_path = f"/api{settings.api_prefix}/companies/{company_id}/users"
     
     # Build query params for pagination URLs
@@ -376,7 +376,13 @@ async def invite_user(
     if role_lower in [ROLE_CODE_MANAGER.lower(), ROLE_CODE_EMPLOYEE.lower()]:
         raise InsufficientPermissions("invite users")
     
-    result = await api.invite_user(invite_data, user.id, company_id)
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    result = await api.invite_user(
+        invite_data, user.id, company_id, ip_address=ip_address, user_agent=user_agent
+    )
     return StandardResponse(
         data=result,
         message=SUCCESS_USER_INVITED,

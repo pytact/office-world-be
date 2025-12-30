@@ -43,6 +43,8 @@ from src.projects.constants import (
     ERROR_CODE_INVALID_STATUS,
 )
 from src.exceptions import ValidationError
+from src.audits.repository import AuditLogRepository
+import logging
 
 
 class ProjectService:
@@ -54,6 +56,7 @@ class ProjectService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = ProjectRepository(session)
+        self.audit_repository = AuditLogRepository(session)
 
     def _validate_status(self, status_value: str) -> None:
         """Validate project status enum value.
@@ -318,6 +321,8 @@ class ProjectService:
         data: ProjectCreate,
         user_id: UUID,
         role: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> ProjectDetail:
         """Create a new project.
         
@@ -351,6 +356,30 @@ class ProjectService:
             status=data.status,
             created_by=user_id,
         )
+        
+        # Create audit log for project creation
+        try:
+            new_values = {
+                "name": project.name,
+                "status": project.status,
+            }
+            
+            await self.audit_repository.create(
+                company_id=company_id,
+                action_code="PROJECT_CREATED",
+                table_name="projects",
+                record_id=project.id,
+                actor_id=user_id,
+                old_values=None,
+                new_values=new_values,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                description=f"Project '{project.name}' created",
+            )
+        except Exception as e:
+            # Audit logging is asynchronous and non-blocking
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create audit log for project creation: {e}")
         
         # Get task count and summaries
         task_count = await self._get_task_count(project.id)
@@ -387,6 +416,8 @@ class ProjectService:
         user_id: UUID,
         role: str,
         if_match: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> ProjectDetail:
         """Update project name and/or status with ETag validation.
         
@@ -427,6 +458,17 @@ class ProjectService:
         if if_match != current_etag:
             raise PreconditionFailed()
         
+        # Build old_values and new_values for audit log (only changed fields)
+        old_values = {}
+        new_values = {}
+        
+        if data.name is not None and data.name != current_project.name:
+            old_values["name"] = current_project.name
+            new_values["name"] = data.name
+        if data.status is not None and data.status != current_project.status:
+            old_values["status"] = current_project.status
+            new_values["status"] = data.status
+        
         # Validate status if provided
         if data.status is not None:
             self._validate_status(data.status)
@@ -451,6 +493,26 @@ class ProjectService:
         
         if not updated_project:
             raise ProjectNotFound(str(project_id))
+        
+        # Create audit log for project update (only if there were changes)
+        if old_values or new_values:
+            try:
+                await self.audit_repository.create(
+                    company_id=company_id,
+                    action_code="PROJECT_UPDATED",
+                    table_name="projects",
+                    record_id=project_id,
+                    actor_id=user_id,
+                    old_values=old_values if old_values else None,
+                    new_values=new_values if new_values else None,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    description=f"Project '{updated_project.name}' updated",
+                )
+            except Exception as e:
+                # Audit logging is asynchronous and non-blocking
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create audit log for project update: {e}")
         
         # Get task count and summaries
         task_count = await self._get_task_count(updated_project.id)

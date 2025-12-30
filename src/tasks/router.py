@@ -32,6 +32,8 @@ from src.tasks.constants import (
     SUCCESS_TASK_ASSIGNMENTS_UPDATED,
     SUCCESS_TASK_DELETED,
 )
+from src.tasks.exceptions import InsufficientPermissionsView
+from src.exceptions import BadRequestError
 from src.tasks.utils import format_last_modified
 from src.users.models import User
 from src.users.utils import generate_request_id
@@ -77,7 +79,6 @@ async def list_tasks(
     
     # Company ID is required for task endpoints
     if company_id is None:
-        from src.tasks.exceptions import InsufficientPermissionsView
         raise InsufficientPermissionsView()
     
     # Handle empty strings for If-None-Match
@@ -142,12 +143,15 @@ async def create_task(
     # Employee ID is required for task creation (creator becomes owner)
     # Note: This is the creator's employee_id from their user account, not the employee_id in assignments
     if employee_id is None:
-        from src.exceptions import BadRequestError
         raise BadRequestError(
             message="You must have an employee record to create tasks. The creator automatically becomes the task owner. The employee_id in assignments is for assigning tasks to other employees.",
             error_code="VALIDATION_FAILED",
             details=[{"field": "employee_id", "issue": "Your user account must be linked to an employee record in this company to create tasks"}],
         )
+    
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
     
     result = await api.create_task(
         company_id=company_id,
@@ -155,6 +159,8 @@ async def create_task(
         user_id=user.id,
         employee_id=employee_id,
         role=role,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     response_data = StandardResponse(
@@ -271,6 +277,10 @@ async def update_task(
     # Handle empty strings for If-Match
     if_match_value = if_match if if_match and if_match.strip() else None
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     result = await api.update_task(
         task_id=task_id,
         company_id=company_id,
@@ -279,6 +289,8 @@ async def update_task(
         employee_id=employee_id,
         role=role,
         if_match=if_match_value,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     # Determine success message based on what was updated
@@ -345,6 +357,10 @@ async def delete_task(
     # Handle empty strings for If-Match
     if_match_value = if_match if if_match and if_match.strip() else None
     
+    # Extract request metadata for audit logging
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     await api.delete_task(
         task_id=task_id,
         company_id=company_id,
@@ -352,6 +368,8 @@ async def delete_task(
         employee_id=employee_id,
         role=role,
         if_match=if_match_value,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     
     # Return 200 OK with StandardResponse (per universal.md RULE 12.1.6 - FastAPI doesn't allow response body with 204)

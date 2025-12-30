@@ -19,6 +19,8 @@ from src.notifications.schemas import (
     BulkMarkReadResponse,
     UnreadCountResponse,
 )
+from src.notifications.utils import format_last_modified, generate_etag
+from src.notifications.exceptions import NotificationNotFound, PreconditionFailed, PreconditionRequired
 from src.notifications.dependencies import NotificationApiDep, get_current_user_with_company
 from src.notifications.documentations.notifications_api_doc import NotificationApiDocs
 from src.notifications.constants import (
@@ -69,7 +71,6 @@ async def list_notifications(
     # This is correct behavior per spec: "All notifications are strictly company-scoped"
     if company_id is None:
         # SuperAdmin without company context - return empty result
-        from src.pagination import PagedCollection
         empty_result = PagedCollection(
             items=[],
             total=0,
@@ -104,7 +105,6 @@ async def list_notifications(
     if hasattr(result, '_etag') and result._etag:
         json_response.headers["ETag"] = result._etag
     if hasattr(result, '_last_modified') and result._last_modified:
-        from src.notifications.utils import format_last_modified
         json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response
 
@@ -134,7 +134,6 @@ async def get_notification(
     # Company-scoped: All notifications are scoped to the user's company
     if company_id is None:
         # SuperAdmin without company context - raise not found
-        from src.notifications.exceptions import NotificationNotFound
         raise NotificationNotFound(str(notification_id))
     
     result = await api.get_notification_by_id(notification_id, user.id, company_id, if_none_match=if_none_match)
@@ -154,7 +153,6 @@ async def get_notification(
     if hasattr(result, '_etag') and result._etag:
         json_response.headers["ETag"] = result._etag
     if hasattr(result, '_last_modified') and result._last_modified:
-        from src.notifications.utils import format_last_modified
         json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response
 
@@ -183,21 +181,17 @@ async def mark_notification_as_read(
     
     # Company-scoped: All notifications are scoped to the user's company
     if company_id is None:
-        from src.notifications.exceptions import NotificationNotFound
         raise NotificationNotFound(str(notification_id))
     
     # If-Match header validation (ETag from GET response)
     if if_match:
         # Get current notification to check ETag
         current_notification = await api.get_notification_by_id(notification_id, user.id, company_id)
-        from src.notifications.utils import generate_etag
         current_etag = generate_etag(current_notification.updated_at)
         if if_match != current_etag:
-            from src.notifications.exceptions import PreconditionFailed
             raise PreconditionFailed()
     else:
         # If-Match header is required for update operations
-        from src.notifications.exceptions import PreconditionRequired
         raise PreconditionRequired()
     
     result = await api.mark_notification_as_read(notification_id, user.id, company_id)
@@ -212,7 +206,6 @@ async def mark_notification_as_read(
     if hasattr(result, '_etag') and result._etag:
         json_response.headers["ETag"] = result._etag
     if hasattr(result, '_last_modified') and result._last_modified:
-        from src.notifications.utils import format_last_modified
         json_response.headers["Last-Modified"] = format_last_modified(result._last_modified)
     return json_response
 
@@ -242,7 +235,6 @@ async def bulk_mark_read(
     # Company-scoped: All notifications are scoped to the user's company
     if company_id is None:
         # SuperAdmin without company context - return empty result
-        from src.notifications.schemas import BulkMarkReadResponse
         empty_result = BulkMarkReadResponse(
             updated_count=0,
             action=data.action,
@@ -292,7 +284,6 @@ async def get_unread_count(
     # Company-scoped: All notifications are scoped to the user's company
     if company_id is None:
         # SuperAdmin without company context - return zero count
-        from src.notifications.schemas import UnreadCountResponse
         empty_result = UnreadCountResponse(unread_count=0)
         response_data = StandardResponse(
             data=empty_result,
