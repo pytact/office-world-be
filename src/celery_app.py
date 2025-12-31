@@ -1,6 +1,5 @@
 from celery import Celery
 from src.config import settings
-import src.celery_worker  
 
 celery_app = Celery(
     "office_world",
@@ -18,6 +17,10 @@ celery_app.conf.update(
     task_time_limit=30 * 60,  # 30 minutes
     task_soft_time_limit=25 * 60,  # 25 minutes
 )
+
+# Import tasks after celery_app is created to avoid circular import
+# This ensures celery_app exists when celery_worker imports it
+import src.celery_worker  # noqa: F401, E402
 
 
 

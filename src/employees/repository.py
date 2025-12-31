@@ -182,7 +182,7 @@ class EmployeeRepository:
         # For Manager role - exclude CEO and HR employees
         if exclude_ceo_hr:
             # Join with UserRoleAssignment to filter by role
-
+            
             # Subquery to get CEO and HR role IDs
             ceo_hr_roles_subquery = (
                 select(Role.id)

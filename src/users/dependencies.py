@@ -27,7 +27,7 @@ async def get_current_user_with_token(
     session: AsyncSession = Depends(get_session),
 ) -> tuple[User, dict]:
     """Get current authenticated user and token payload.
-
+    
     Returns tuple of (User, token_payload) for role and company_id extraction.
     Also checks if token is blacklisted (logged out).
     """
@@ -70,7 +70,7 @@ async def get_current_superadmin(
     session: AsyncSession = Depends(get_session),
 ) -> User:
     """Get current authenticated user and verify SuperAdmin role.
-
+    
     Based on F1A_api_spec.md Section 3.1 - SuperAdmin role definition.
     SuperAdmin has role="superadmin" (case-insensitive) and company_id=null in token.
     """

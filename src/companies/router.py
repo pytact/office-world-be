@@ -68,7 +68,7 @@ async def list_companies(
     response: Response = None,
 ) -> StandardResponse[CompanyPaginatedResponse]:
     """List all companies with pagination, search, filtering, and sorting.
-
+    
     Based on F4_api_spec.md Section 4.4.1 - GET /api/v1/companies.
     Authorization: SuperAdmin only.
     """
@@ -99,7 +99,7 @@ async def get_company(
     response: Response = None,
 ) -> StandardResponse[CompanyDetail] | FastAPIResponse:
     """Get company details with user count.
-
+    
     Based on F4_api_spec.md Section 4.4.3 - GET /api/v1/companies/{company_id}.
     Authorization: SuperAdmin only.
     ETag logic in service layer per error_prevention.md RULE 19.
@@ -143,7 +143,7 @@ async def create_company(
     response: Response = None,
 ) -> StandardResponse[CompanyDetail]:
     """Create a new company.
-
+    
     Based on F4_api_spec.md Section 4.4.2 - POST /api/v1/companies.
     Authorization: SuperAdmin only.
     """
@@ -191,7 +191,7 @@ async def update_company(
     response: Response = None,
 ) -> StandardResponse[CompanyDetail]:
     """Update company information or activate/deactivate company.
-
+    
     Based on F4_api_spec.md Section 4.4.4 - PATCH /api/v1/companies/{company_id}.
     Authorization: SuperAdmin only.
     ETag validation in service layer per error_prevention.md RULE 19.
@@ -240,7 +240,7 @@ async def delete_company(
     response: Response = None,
 ) -> Response:
     """Hard delete a company.
-
+    
     Based on F4_api_spec.md Section 4.4.5 - DELETE /api/v1/companies/{company_id}.
     Authorization: SuperAdmin only.
     ETag validation in service layer per error_prevention.md RULE 19.

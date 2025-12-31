@@ -581,7 +581,7 @@ class UserService:
         
         # Format expiry date for email
         expiry_date_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
-
+        
         # Build activation URL using frontend_url from settings
         if hasattr(settings, 'frontend_url'):
             activation_url = f"{settings.frontend_url}/activate/{user.token}"
@@ -1229,7 +1229,7 @@ class UserService:
         
         # Format expiry date for email
         expiry_date_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
-
+        
         # Build activation URL using frontend_url from settings
         if hasattr(settings, 'frontend_url'):
             activation_url = f"{settings.frontend_url}/activate/{user.token}"
